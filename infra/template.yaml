@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Smart Living Ledger - IoT event pipeline.
+  Ingests smart home device events via API Gateway + Lambda,
+  stores in DynamoDB, and exposes a query API for the dashboard.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment stage.
+
+  TableName:
+    Type: String
+    Default: ""
+    Description: >
+      DynamoDB table name. Leave blank to auto-generate as sll-events-{Stage}.
+
+  TTLDays:
+    Type: Number
+    Default: 30
+    Description: Days before events are automatically deleted.
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref TableName
+        STAGE: !Ref Stage
+        TTL_DAYS: !Ref TTLDays
+    Tracing: Active
+    Tags:
+      Project: smart-living-ledger
+      Stage: !Ref Stage
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, prod]
+  UseDefaultTableName: !Equals [!Ref TableName, ""]
+
+Resources:
+
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !If
+        - UseDefaultTableName
+        - !Sub "sll-events-${Stage}"
+        - !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: N
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+        - AttributeName: ts
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expire_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: smart-living-ledger
+        - Key: Stage
+          Value: !Ref Stage
+
+  IngestFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: DynamoDBWriteEvents
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt EventsTable.Arn
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-ingest-${Stage}
+      CodeUri: ../ingest/
+      Handler: handler.lambda_handler
+      Role: !GetAtt IngestFunctionRole.Arn
+      Description: Validates and stores IoT device events from API Gateway
+      Events:
+        IngestEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SLLApi
+            Path: /events
+            Method: POST
+
+  QueryFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: DynamoDBReadEvents
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                Resource: !GetAtt EventsTable.Arn
+
+  QueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-query-${Stage}
+      CodeUri: ../query/
+      Handler: handler.lambda_handler
+      Role: !GetAtt QueryFunctionRole.Arn
+      Description: Queries DynamoDB for device events to power the dashboard
+      Events:
+        GetAllEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SLLApi
+            Path: /events
+            Method: GET
+        GetDeviceEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SLLApi
+            Path: /events/{device_id}
+            Method: GET
+
+  SLLApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Stage
+      Description: Smart Living Ledger IoT ingestion and query API
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.resourcePath","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}'
+
+  IngestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-ingest-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  QueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-query-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/sll-api-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  IngestErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-ingest-errors-${Stage}
+      AlarmDescription: Ingest Lambda error count exceeds threshold in 5 min window
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref IngestFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  IngestLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-ingest-p95-latency-${Stage}
+      AlarmDescription: Ingest Lambda P95 duration exceeds 3000ms
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref IngestFunction
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  QueryErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-query-errors-${Stage}
+      AlarmDescription: Query Lambda error count exceeds threshold
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QueryFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiBaseUrl:
+    Description: API Gateway base URL
+    Value: !Sub https://${SLLApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+    Export:
+      Name: !Sub sll-api-url-${Stage}
+
+  IngestEndpoint:
+    Description: POST endpoint for device events
+    Value: !Sub https://${SLLApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events
+
+  QueryEndpoint:
+    Description: GET endpoint for dashboard queries
+    Value: !Sub https://${SLLApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events
+
+  EventsTableName:
+    Description: DynamoDB table name
+    Value: !Ref EventsTable
+    Export:
+      Name: !Sub sll-table-name-${Stage}
+
+  EventsTableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt EventsTable.Arn
+
+  IngestFunctionArn:
+    Description: Ingest Lambda ARN
+    Value: !GetAtt IngestFunction.Arn
+
+  QueryFunctionArn:
+    Description: Query Lambda ARN
+    Value: !GetAtt QueryFunction.Arn

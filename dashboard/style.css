@@ -1,0 +1,230 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --surface: #111827;
+  --surface-strong: #172033;
+  --border: #263247;
+  --text: #eef4ff;
+  --muted: #97a3b6;
+  --muted-strong: #c2cad8;
+  --blue: #38bdf8;
+  --green: #34d399;
+  --orange: #fb923c;
+  --purple: #c084fc;
+  --red: #f87171;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 30rem),
+    radial-gradient(circle at bottom right, rgba(192, 132, 252, 0.10), transparent 28rem),
+    var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+canvas {
+  font: inherit;
+}
+
+.dashboard-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0;
+}
+
+.dashboard-header,
+.dashboard-footer,
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dashboard-header {
+  margin-bottom: 24px;
+}
+
+.eyebrow,
+.panel-kicker {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0;
+  font-size: clamp(2rem, 5vw, 3.8rem);
+  letter-spacing: -0.05em;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+  letter-spacing: -0.03em;
+}
+
+.refresh-status,
+.dashboard-footer {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.refresh-status {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 20px rgba(52, 211, 153, 0.9);
+}
+
+.error-banner {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  border-radius: 12px;
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.panel {
+  min-width: 0;
+  min-height: 300px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(23, 32, 51, 0.92), rgba(17, 24, 39, 0.96));
+  box-shadow: var(--shadow);
+}
+
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-pill {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.chart-frame {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+  margin-top: 22px;
+}
+
+.status-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.status-panel h2 {
+  margin-bottom: 16px;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+}
+
+.motion-panel h2 {
+  color: var(--green);
+}
+
+.voice-panel h2 {
+  color: var(--purple);
+}
+
+.panel-meta,
+.panel-timestamp {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.panel-meta {
+  color: var(--muted-strong);
+  font-weight: 600;
+}
+
+.panel-timestamp {
+  margin-top: 8px;
+  font-size: 0.92rem;
+}
+
+.dashboard-footer {
+  margin-top: 20px;
+  justify-content: flex-start;
+}
+
+#refresh-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+  padding: 10px 16px;
+}
+
+#refresh-button:hover,
+#refresh-button:focus-visible {
+  border-color: var(--blue);
+  outline: none;
+}
+
+@media (max-width: 780px) {
+  .dashboard-header,
+  .dashboard-footer,
+  .panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .refresh-status {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    min-height: 260px;
+    padding: 18px;
+  }
+}

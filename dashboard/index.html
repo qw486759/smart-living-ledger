@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Living Ledger</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="dashboard-shell">
+    <header class="dashboard-header">
+      <div>
+        <p class="eyebrow">AWS Serverless IoT Pipeline</p>
+        <h1>Smart Living Ledger</h1>
+      </div>
+      <div class="refresh-status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="last-refresh">Waiting for first refresh</span>
+      </div>
+    </header>
+
+    <section id="error-banner" class="error-banner" role="alert" hidden></section>
+
+    <section class="panel-grid" aria-label="Device telemetry overview">
+      <article class="panel chart-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-kicker">Temperature</p>
+            <h2>Recent readings</h2>
+          </div>
+          <span id="temp-latest" class="metric-pill">-- °C</span>
+        </div>
+        <div class="chart-frame">
+          <canvas id="temperature-chart" aria-label="Temperature over time" role="img"></canvas>
+        </div>
+      </article>
+
+      <article class="panel chart-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-kicker">Smart Plug</p>
+            <h2>Average watts per hour</h2>
+          </div>
+          <span id="plug-latest" class="metric-pill">-- W</span>
+        </div>
+        <div class="chart-frame">
+          <canvas id="plug-chart" aria-label="Plug wattage per hour" role="img"></canvas>
+        </div>
+      </article>
+
+      <article class="panel status-panel motion-panel">
+        <p class="panel-kicker">Motion Sensor</p>
+        <h2 id="motion-state">No motion data</h2>
+        <p id="motion-device" class="panel-meta">Device unavailable</p>
+        <p id="motion-time" class="panel-timestamp">--</p>
+      </article>
+
+      <article class="panel status-panel voice-panel">
+        <p class="panel-kicker">Voice Command</p>
+        <h2 id="voice-command">No command data</h2>
+        <p id="voice-device" class="panel-meta">Device unavailable</p>
+        <p id="voice-time" class="panel-timestamp">--</p>
+      </article>
+    </section>
+
+    <footer class="dashboard-footer">
+      <button id="refresh-button" type="button">Refresh now</button>
+      <span>Auto-refreshes every 30 seconds</span>
+    </footer>
+  </main>
+</body>
+  <script src="config.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
