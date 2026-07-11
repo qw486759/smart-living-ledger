@@ -378,6 +378,101 @@ Resources:
       LogGroupName: !Sub /aws/lambda/sll-stream-consumer-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
+  # ---- SNS -> SQS -> projection writer (sole writer, buffered/competing) ----
+
+  ProjectionDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub sll-projection-dlq-${Stage}
+      MessageRetentionPeriod: 1209600   # 14 days
+
+  ProjectionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub sll-projection-${Stage}
+      VisibilityTimeout: 180            # >= 6x the 30s function timeout
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ProjectionDLQ.Arn
+        maxReceiveCount: 3
+
+  ProjectionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ProjectionQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ProjectionQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref EventStoredTopic
+
+  EventStoredToProjectionQueue:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref EventStoredTopic
+      Protocol: sqs
+      Endpoint: !GetAtt ProjectionQueue.Arn
+      RawMessageDelivery: true          # SQS + alerter see the same raw contract
+
+  ProjectionConsumerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: ConsumeQueueWriteProjection
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt ProjectionQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt ProjectionTable.Arn
+
+  ProjectionConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-projection-consumer-${Stage}
+      CodeUri: ../projection_consumer/
+      Handler: handler.lambda_handler
+      Role: !GetAtt ProjectionConsumerFunctionRole.Arn
+      Description: Writes the current-state projection from event-stored messages
+      Environment:
+        Variables:
+          PROJECTION_TABLE_NAME: !Ref ProjectionTable
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProjectionQueue.Arn
+            BatchSize: 10
+
+  ProjectionConsumerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-projection-consumer-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
 Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
@@ -424,3 +519,11 @@ Outputs:
   StreamConsumerDLQUrl:
     Description: DLQ for failed stream-consumer batches
     Value: !Ref StreamConsumerDLQ
+
+  ProjectionQueueUrl:
+    Description: SQS queue feeding the projection writer
+    Value: !Ref ProjectionQueue
+
+  ProjectionDLQUrl:
+    Description: DLQ for poison projection messages (redrive target)
+    Value: !Ref ProjectionDLQ
