@@ -268,6 +268,116 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
 
+  # ===========================================================================
+  # Async fan-out path: Streams -> stream consumer -> SNS -> {SQS projection,
+  # anomaly alerter}. See docs/adr/0002-0004.
+  # ===========================================================================
+
+  ProjectionTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub sll-projection-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      # Current-state-per-device read model: one item per (type, device).
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: device_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk          # "TYPE#<type>"
+          KeyType: HASH
+        - AttributeName: device_id
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: smart-living-ledger
+        - Key: Stage
+          Value: !Ref Stage
+
+  EventStoredTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub sll-event-stored-${Stage}
+
+  StreamConsumerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub sll-stream-consumer-dlq-${Stage}
+      MessageRetentionPeriod: 1209600   # 14 days
+
+  StreamConsumerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: StreamReadPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                Resource: !GetAtt EventsTable.StreamArn
+              - Effect: Allow
+                # ListStreams has no resource-level support; this wildcard is
+                # required by the service and is the only one in this template.
+                Action: dynamodb:ListStreams
+                Resource: "*"
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref EventStoredTopic
+              - Effect: Allow
+                # The event source mapping delivers failed batches here.
+                Action: sqs:SendMessage
+                Resource: !GetAtt StreamConsumerDLQ.Arn
+
+  StreamConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-stream-consumer-${Stage}
+      CodeUri: ../stream_consumer/
+      Handler: handler.lambda_handler
+      Role: !GetAtt StreamConsumerFunctionRole.Arn
+      Description: Republishes INSERT stream records as SNS event-stored messages
+      Environment:
+        Variables:
+          EVENT_STORED_TOPIC_ARN: !Ref EventStoredTopic
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt EventsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName":["INSERT"]}'
+            DestinationConfig:
+              OnFailure:
+                Destination: !GetAtt StreamConsumerDLQ.Arn
+
+  StreamConsumerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-stream-consumer-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
 Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
@@ -300,3 +410,17 @@ Outputs:
   QueryFunctionArn:
     Description: Query Lambda ARN
     Value: !GetAtt QueryFunction.Arn
+
+  ProjectionTableName:
+    Description: DynamoDB projection (current-state) table name
+    Value: !Ref ProjectionTable
+    Export:
+      Name: !Sub sll-projection-table-${Stage}
+
+  EventStoredTopicArn:
+    Description: SNS topic ARN for event-stored fan-out
+    Value: !Ref EventStoredTopic
+
+  StreamConsumerDLQUrl:
+    Description: DLQ for failed stream-consumer batches
+    Value: !Ref StreamConsumerDLQ
