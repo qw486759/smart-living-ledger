@@ -473,6 +473,54 @@ Resources:
       LogGroupName: !Sub /aws/lambda/sll-projection-consumer-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
+  # ---- SNS -> anomaly alerter (second, independent fan-out consumer) --------
+
+  AnomalyAlerterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: PublishAnomalyMetric
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                # PutMetricData has no resource ARN; constrain by namespace.
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: SmartLivingLedger
+
+  AnomalyAlerterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-alerter-${Stage}
+      CodeUri: ../alerter/
+      Handler: handler.lambda_handler
+      Role: !GetAtt AnomalyAlerterFunctionRole.Arn
+      Description: Flags out-of-range readings as a CloudWatch custom metric
+      Events:
+        Alert:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventStoredTopic
+
+  AnomalyAlerterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-alerter-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
 Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
