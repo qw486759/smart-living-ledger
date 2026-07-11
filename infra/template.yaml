@@ -78,6 +78,10 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      StreamSpecification:
+        # NEW_IMAGE is all the async consumers need: the post-write item.
+        # Change-data-capture source for the fan-out path (see docs/adr/0002).
+        StreamViewType: NEW_IMAGE
       TimeToLiveSpecification:
         AttributeName: expire_at
         Enabled: true
