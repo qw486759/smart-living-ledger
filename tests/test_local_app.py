@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -11,18 +13,23 @@ def test_local_ingest_app_writes_valid_event_to_jsonl(tmp_path, monkeypatch):
     monkeypatch.setattr(local_app, "EVENTS_FILE", events_file)
     client = TestClient(local_app.app)
 
+    ts = int(time.time())
     response = client.post(
         "/events",
         json={
             "device_id": "local-motion-001",
             "type": "motion",
             "payload": {"detected": True},
-            "ts": 1_900_000_000,
+            "ts": ts,
         },
     )
 
     assert response.status_code == 200
-    assert response.json() == {"message": "ok", "device_id": "local-motion-001"}
+    assert response.json() == {
+        "status": "ok",
+        "device_id": "local-motion-001",
+        "ts": ts,
+    }
     assert '"device_id":"local-motion-001"' in events_file.read_text()
 
 
@@ -35,7 +42,7 @@ def test_local_ingest_app_returns_validation_error_contract():
             "device_id": "local-plug-001",
             "type": "plug",
             "payload": {"watt": -1},
-            "ts": 1_900_000_000,
+            "ts": int(time.time()),
         },
     )
 

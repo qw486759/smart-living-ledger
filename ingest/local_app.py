@@ -34,4 +34,6 @@ async def ingest_event(request: Request):
     with EVENTS_FILE.open("a", encoding="utf-8") as event_file:
         event_file.write(json.dumps(event, separators=(",", ":")) + "\n")
 
-    return {"message": "ok", "device_id": event["device_id"]}
+    # Mirror the Lambda success contract (ingest/handler.py) exactly so the
+    # local and cloud ingest paths can't silently drift.
+    return {"status": "ok", "device_id": event["device_id"], "ts": event["ts"]}
