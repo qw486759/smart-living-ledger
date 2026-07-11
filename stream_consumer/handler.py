@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 import boto3
-from logic import build_event_stored_message, is_insert, new_image_to_item
+from stream_logic import build_event_stored_message, is_insert, new_image_to_item
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

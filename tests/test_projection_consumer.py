@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, "projection_consumer"))
 
 from botocore.exceptions import ClientError  # noqa: E402
 
-from projection_consumer import logic  # noqa: E402
+from projection_consumer import projection_logic as logic  # noqa: E402
 
 
 def test_update_params_are_ts_versioned_and_decimal():

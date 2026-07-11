@@ -10,7 +10,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT_DIR)
 sys.path.insert(0, os.path.join(ROOT_DIR, "stream_consumer"))
 
-from stream_consumer import logic  # noqa: E402
+from stream_consumer import stream_logic as logic  # noqa: E402
 
 
 def _insert_record():

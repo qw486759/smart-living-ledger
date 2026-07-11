@@ -5,7 +5,7 @@ from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
-from logic import projection_update_params
+from projection_logic import projection_update_params
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
