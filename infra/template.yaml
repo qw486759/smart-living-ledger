@@ -390,7 +390,11 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub sll-projection-${Stage}
-      VisibilityTimeout: 180            # >= 6x the 30s function timeout
+      # 2x the 30s function timeout. AWS recommends 6x to avoid reprocessing
+      # during long invocations, but projection writes finish in milliseconds,
+      # so 2x is safe and keeps redrive latency (~maxReceiveCount x VT) low
+      # enough to be operationally observable rather than a ~9 min wait.
+      VisibilityTimeout: 60
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt ProjectionDLQ.Arn
         maxReceiveCount: 3
