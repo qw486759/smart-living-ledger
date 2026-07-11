@@ -59,11 +59,25 @@ Resources:
           AttributeType: S
         - AttributeName: ts
           AttributeType: N
+        - AttributeName: type
+          AttributeType: S
       KeySchema:
         - AttributeName: device_id
           KeyType: HASH
         - AttributeName: ts
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # Serves the dashboard's per-type time-series reads (temp line, plug
+        # hourly bars) as a single-partition Query instead of a full-table Scan.
+        # This is the read-path fix and is independent of the async projection.
+        - IndexName: type-ts-index
+          KeySchema:
+            - AttributeName: type
+              KeyType: HASH
+            - AttributeName: ts
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: expire_at
         Enabled: true
