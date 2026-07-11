@@ -29,6 +29,15 @@ flowchart TD
         CW["CloudWatch\nerrors + p95 duration"]
     end
 
+    subgraph ASYNC["Async fan-out (CDC)"]
+        STREAM["Stream consumer\nINSERT → publish"]
+        SNS(["SNS event-stored"])
+        SQS["SQS + DLQ"]
+        PROJC["Projection consumer\nts-versioned write"]
+        PROJDB[("Projection table\ncurrent state per device")]
+        ALERT["Anomaly alerter\nCloudWatch metric"]
+    end
+
     subgraph DASH["Ops dashboard"]
         UI["HTML + Chart.js"]
     end
@@ -42,17 +51,23 @@ flowchart TD
     LINGEST -. logs/metrics .-> CW
     DB --> LQUERY
     LQUERY --> UI
+    DB -- stream (NEW_IMAGE) --> STREAM
+    STREAM --> SNS
+    SNS --> SQS --> PROJC --> PROJDB
+    SNS --> ALERT -. metric .-> CW
 ```
 
-The system today has two paths, both synchronous:
+The system has three paths:
 
-- **Write path:** simulator → `POST /events` (API Gateway) → ingest Lambda
-  (validate → conditional `PutItem`) → DynamoDB.
-- **Read path:** dashboard → `GET /events` (API Gateway) → query Lambda →
-  DynamoDB → charts.
-
-An asynchronous fan-out path (DynamoDB Streams → projection/alert consumers) is
-planned but not yet built; see [Known limitations & roadmap](#known-limitations--roadmap).
+- **Write path (synchronous):** simulator → `POST /events` (API Gateway) → ingest
+  Lambda (validate → conditional `PutItem`) → DynamoDB.
+- **Read path (synchronous):** dashboard → `GET /events` (API Gateway) → query
+  Lambda → DynamoDB (device-scoped or type-ts GSI `Query`) → charts.
+- **Async fan-out (change data capture):** DynamoDB stream → stream consumer →
+  SNS → {SQS → projection consumer → projection table} and {anomaly alerter →
+  CloudWatch metric}. Why it's shaped this way is recorded in
+  [`docs/adr/0002`–`0004`](docs/adr/); operating it is in
+  [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 Flow in words:
 
@@ -93,10 +108,12 @@ The dominant read is "recent events for one device," which maps to a single
 `Query` against one partition, newest-first. `ts` as the range key gives
 per-device ordering for free.
 
-Known cost: cross-device reads. The dashboard's per-type panels currently use a
-bounded `Scan` because there is no index on `type`. That is fine at the current
-table size but is the first thing to change before the table grows — a GSI keyed
-on `(type, ts)` is the intended fix (see roadmap).
+Cross-device, per-type reads (the dashboard's chart panels) are served by a
+`type-ts-index` GSI keyed on `(type, ts)`, so those are a single-partition
+`Query` too, not a full-table `Scan`. A bounded `Scan` remains only as the
+no-filter fallback. The projection table (current state per device) is a separate
+concern and does not serve these historical/chart reads — see
+[`docs/adr/0004`](docs/adr/0004-delivery-semantics.md).
 
 ### Lambda, not a long-running service
 
@@ -299,13 +316,6 @@ The `ts`-based TTL is what keeps storage flat rather than growing without bound.
 
 Current shortcuts and what would replace them, roughly in priority order:
 
-- **Per-type dashboard reads use a `Scan`.** Fine at this table size, wrong once
-  the table has millions of items. Replace with a GSI on `(type, ts)` (or a
-  materialized read model) so the panels do a `Query` instead.
-- **No asynchronous fan-out.** Nothing reacts to a write today. The intended next
-  step is DynamoDB Streams → a projection consumer (idempotent/order-tolerant via
-  a `ts`-versioned conditional write) and a separate threshold/anomaly consumer,
-  so telemetry and alerting decouple. The relevant ADRs will land under `docs/adr/`.
 - **No edge buffer.** The simulator dead-letters to a local file; real devices
   should persist unsent events locally or publish through a queue so short
   outages don't drop telemetry.
