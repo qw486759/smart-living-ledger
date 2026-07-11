@@ -66,13 +66,14 @@ jobs:
           pip install -r requirements.txt
 
       # -----------------------------------------------------------------------
-      # 4. Run schema/unit tests (no AWS needed)
+      # 4. Run the unit tests (no AWS needed)
       #    -v = verbose output so failures are easy to read in the Actions log
-      #    We skip integration and load tests here — those need real AWS
+      #    We list the AWS-free suites explicitly and skip integration/load
+      #    tests here — those need a deployed stack (SLL_API_URL).
       # -----------------------------------------------------------------------
       - name: Run unit tests
         run: |
-          pytest tests/test_schema.py -v --tb=short
+          pytest tests/test_schema.py tests/test_http_responses.py tests/test_local_app.py -v --tb=short
 
       # -----------------------------------------------------------------------
       # 5. Check code style with flake8 (non-blocking)
