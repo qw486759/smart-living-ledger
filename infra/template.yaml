@@ -151,7 +151,10 @@ Resources:
                   - dynamodb:Query
                   - dynamodb:Scan
                   - dynamodb:GetItem
-                Resource: !GetAtt EventsTable.Arn
+                Resource:
+                  - !GetAtt EventsTable.Arn
+                  # Querying the type-ts GSI needs permission on the index ARN too.
+                  - !Sub "${EventsTable.Arn}/index/*"
 
   QueryFunction:
     Type: AWS::Serverless::Function
