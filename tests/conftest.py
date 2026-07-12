@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+
 @pytest.fixture
 def api_url():
     url = os.environ.get("SLL_API_URL")
