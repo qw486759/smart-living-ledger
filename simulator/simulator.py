@@ -104,10 +104,11 @@ def send_event(event: dict[str, Any]) -> bool:
                 delay_seconds=delay,
             )
             time.sleep(delay)
-            
+
     _write_dead_letter(event)
     _log_event("error", "event_delivery_failed", event, attempts=RETRY_LIMIT)
     return False
+
 
 DEAD_LETTER_PATH = os.path.join(os.path.dirname(__file__), "dead_letter.jsonl")
 
@@ -137,7 +138,8 @@ def _write_dead_letter(event: dict[str, Any]) -> None:
                 }
             )
         )
-        
+
+
 def _retry_delay_seconds(attempt: int) -> float:
     exponential_delay = BASE_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
     jitter = random.uniform(0, BASE_RETRY_DELAY_SECONDS)

@@ -12,6 +12,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 TABLE_NAME = os.environ["TABLE_NAME"]
+TYPE_TS_INDEX = "type-ts-index"
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
 
@@ -45,11 +46,13 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
     try:
         limit = _parse_limit(query_params.get("limit"))
-        result = (
-            _query_device(device_id, query_params, limit)
-            if device_id
-            else _scan_recent(query_params, limit)
-        )
+        if device_id:
+            result = _query_device(device_id, query_params, limit)
+        elif query_params.get("type"):
+            # Dashboard per-type panels: Query the type-ts GSI, not a full Scan.
+            result = _query_by_type(query_params["type"], query_params, limit)
+        else:
+            result = _scan_recent(query_params, limit)
     except InvalidLimitError as exc:
         _log(
             "warning",
@@ -98,22 +101,25 @@ def _parse_limit(raw_limit: str | None) -> int:
     return limit
 
 
-def _query_device(device_id: str, params: dict, limit: int) -> dict:
-    key_condition = Key("device_id").eq(device_id)
+def _apply_time_range(key_condition, params: dict):
     from_ts = params.get("from")
     to_ts = params.get("to")
+    if from_ts is None and to_ts is None:
+        return key_condition
+    if from_ts is None or to_ts is None:
+        raise ValueError("'from' and 'to' must be provided together")
+    try:
+        from_value = int(from_ts)
+        to_value = int(to_ts)
+    except ValueError as exc:
+        raise ValueError("'from' and 'to' must be integer Unix timestamps") from exc
+    if from_value > to_value:
+        raise ValueError("'from' must be less than or equal to 'to'")
+    return key_condition & Key("ts").between(from_value, to_value)
 
-    if from_ts is not None or to_ts is not None:
-        if from_ts is None or to_ts is None:
-            raise ValueError("'from' and 'to' must be provided together")
-        try:
-            from_value = int(from_ts)
-            to_value = int(to_ts)
-        except ValueError as exc:
-            raise ValueError("'from' and 'to' must be integer Unix timestamps") from exc
-        if from_value > to_value:
-            raise ValueError("'from' must be less than or equal to 'to'")
-        key_condition &= Key("ts").between(from_value, to_value)
+
+def _query_device(device_id: str, params: dict, limit: int) -> dict:
+    key_condition = _apply_time_range(Key("device_id").eq(device_id), params)
 
     response = table.query(
         KeyConditionExpression=key_condition,
@@ -123,6 +129,24 @@ def _query_device(device_id: str, params: dict, limit: int) -> dict:
 
     return {
         "device_id": device_id,
+        "count": len(response["Items"]),
+        "items": [_serialize(item) for item in response["Items"]],
+        "has_more": "LastEvaluatedKey" in response,
+    }
+
+
+def _query_by_type(event_type: str, params: dict, limit: int) -> dict:
+    key_condition = _apply_time_range(Key("type").eq(event_type), params)
+
+    response = table.query(
+        IndexName=TYPE_TS_INDEX,
+        KeyConditionExpression=key_condition,
+        Limit=limit,
+        ScanIndexForward=False,
+    )
+
+    return {
+        "type": event_type,
         "count": len(response["Items"]),
         "items": [_serialize(item) for item in response["Items"]],
         "has_more": "LastEvaluatedKey" in response,

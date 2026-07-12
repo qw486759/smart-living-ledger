@@ -106,32 +106,77 @@ Each line is a full event that never got a 200. Once the endpoint is healthy you
 can replay them by POSTing each line to `/events` (they're idempotent on
 `device_id`+`ts`, so replaying an already-stored event just returns 409 — safe).
 
-## Async projection/alert path (planned)
+## Async projection/alert path
 
-> This path is on the roadmap (DynamoDB Streams → projection consumer + anomaly
-> consumer) and is **not deployed yet**. The procedures below are the intended
-> operating model and take effect once the stack includes it. See the roadmap in
-> the README and the forthcoming ADRs under `docs/adr/`.
+Flow: `EventsTable` stream → `sll-stream-consumer-<stage>` → SNS
+`sll-event-stored-<stage>` → {`sll-projection-<stage>` SQS →
+`sll-projection-consumer-<stage>` writes `sll-projection-<stage>` table} and
+{`sll-alerter-<stage>` emits the `SmartLivingLedger/AnomalyDetected` metric}.
+Delivery guarantees are in [adr/0004](adr/0004-delivery-semantics.md).
 
-- **Projection consumer failing (stream Lambda erroring):** the read model stops
-  updating while the synchronous write path keeps working — so the source table
-  is correct but derived views go stale. Check the stream consumer's error metric
-  and logs first; the fix is almost never on the write side.
-- **Rising DynamoDB Streams iterator age:** the consumer is falling behind the
-  stream (or failing and retrying the same batch). Growing iterator age means
-  increasing lag between a write and its projection/alert. Look for a poison
-  record causing repeated batch failures, or a downstream (SNS/SQS) that's
-  rejecting. Bisecting the batch on error isolates a poison record.
-- **Messages sitting in the DLQ:** a record failed processing past its retry
-  budget and was parked. Inspect it before redriving — a DLQ message is usually
-  either a poison payload (a schema the consumer can't handle) or a transient
-  downstream outage that has since cleared. Redrive only after confirming the
-  cause is gone; because the projection write is idempotent on `device_id`+`ts`,
-  redriving already-applied records is safe.
-- **Telling the paths apart:** the synchronous ingest path degrading shows up as
-  `POST /events` 5xx and the ingest alarms. The async path degrading shows up as
-  stale projections / missing alerts with a **healthy** ingest path — the table
-  is fine, only the derived work is behind.
+**Telling the paths apart first.** The synchronous ingest path degrading shows up
+as `POST /events` 5xx and the ingest alarms. The async path degrading shows up as
+**stale projections or missing alerts while the ingest path is healthy** — the
+source table is fine, only the derived work is behind. The projection is
+eventually consistent by design, so a few seconds of lag is normal.
+
+### Stream consumer erroring — alarm `sll-stream-consumer-errors-<stage>`
+
+The CDC→SNS bridge is failing (usually an SNS publish problem). Downstream
+projections and alerts stop updating; the write path is unaffected.
+
+```bash
+aws logs filter-log-events --log-group-name /aws/lambda/sll-stream-consumer-dev \
+  --filter-pattern '"event_published"'
+```
+
+No `event_published` lines while writes are landing ⇒ the bridge is stuck. Failed
+batches are retried, bisected, then parked in `sll-stream-consumer-dlq-<stage>`.
+
+### Rising iterator age — alarm `sll-stream-iterator-age-<stage>`
+
+The stream consumer is falling behind (or repeatedly failing a batch and
+retrying). Growing iterator age = growing lag between a write and its
+projection/alert. Look for a poison record causing repeated batch failures, or an
+SNS problem. `BisectBatchOnFunctionError` narrows a bad batch down to the offending
+record, which eventually lands in `sll-stream-consumer-dlq-<stage>`.
+
+### Projection consumer erroring — alarm `sll-projection-consumer-errors-<stage>`
+
+The sole projection writer is failing. The read model goes stale while the source
+table and the alerter are fine.
+
+```bash
+aws logs filter-log-events --log-group-name /aws/lambda/sll-projection-consumer-dev \
+  --filter-pattern '"projection_write_failed"'
+```
+
+A `ConditionalCheckFailedException` is **not** an error here — it's a duplicate or
+out-of-order message being correctly skipped (logged as
+`projection_skipped_stale_or_duplicate`). Only non-conditional errors page.
+
+### Messages in a DLQ — alarms `sll-projection-dlq-depth-<stage>` / `sll-stream-consumer-dlq-depth-<stage>`
+
+A record failed past its retry budget and was parked. **Inspect before redriving.**
+
+```bash
+# Peek (does not delete): see what's parked
+aws sqs receive-message --queue-url <dlq-url> --max-number-of-messages 10 \
+  --visibility-timeout 0
+
+# Redrive back to the source queue once the cause is fixed (projection DLQ):
+aws sqs start-message-move-task \
+  --source-arn arn:aws:sqs:<region>:<acct>:sll-projection-dlq-<stage>
+```
+
+A DLQ message is usually a poison payload (a shape the consumer can't handle) or a
+transient downstream outage that has since cleared. Redrive only after confirming
+the cause is gone; because every consumer is idempotent on `ts`, redriving
+already-applied records is safe (they no-op). Queue URLs/ARNs are stack outputs
+(`ProjectionQueueUrl`, `ProjectionDLQUrl`, `StreamConsumerDLQUrl`).
+
+> A poison message takes ~`maxReceiveCount` × the queue visibility timeout
+> (3 × 60s ≈ up to ~3 min) to reach the projection DLQ.
 
 ## Escalation / rollback
 

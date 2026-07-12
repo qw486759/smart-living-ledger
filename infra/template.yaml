@@ -59,11 +59,29 @@ Resources:
           AttributeType: S
         - AttributeName: ts
           AttributeType: N
+        - AttributeName: type
+          AttributeType: S
       KeySchema:
         - AttributeName: device_id
           KeyType: HASH
         - AttributeName: ts
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # Serves the dashboard's per-type time-series reads (temp line, plug
+        # hourly bars) as a single-partition Query instead of a full-table Scan.
+        # This is the read-path fix and is independent of the async projection.
+        - IndexName: type-ts-index
+          KeySchema:
+            - AttributeName: type
+              KeyType: HASH
+            - AttributeName: ts
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        # NEW_IMAGE is all the async consumers need: the post-write item.
+        # Change-data-capture source for the fan-out path (see docs/adr/0002).
+        StreamViewType: NEW_IMAGE
       TimeToLiveSpecification:
         AttributeName: expire_at
         Enabled: true
@@ -137,7 +155,10 @@ Resources:
                   - dynamodb:Query
                   - dynamodb:Scan
                   - dynamodb:GetItem
-                Resource: !GetAtt EventsTable.Arn
+                Resource:
+                  - !GetAtt EventsTable.Arn
+                  # Querying the type-ts GSI needs permission on the index ARN too.
+                  - !Sub "${EventsTable.Arn}/index/*"
 
   QueryFunction:
     Type: AWS::Serverless::Function
@@ -247,6 +268,367 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
 
+  # ===========================================================================
+  # Async fan-out path: Streams -> stream consumer -> SNS -> {SQS projection,
+  # anomaly alerter}. See docs/adr/0002-0004.
+  # ===========================================================================
+
+  ProjectionTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub sll-projection-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      # Current-state-per-device read model: one item per (type, device).
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: device_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk          # "TYPE#<type>"
+          KeyType: HASH
+        - AttributeName: device_id
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: smart-living-ledger
+        - Key: Stage
+          Value: !Ref Stage
+
+  EventStoredTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub sll-event-stored-${Stage}
+
+  StreamConsumerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub sll-stream-consumer-dlq-${Stage}
+      MessageRetentionPeriod: 1209600   # 14 days
+
+  StreamConsumerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: StreamReadPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                Resource: !GetAtt EventsTable.StreamArn
+              - Effect: Allow
+                # ListStreams has no resource-level support; this wildcard is
+                # required by the service and is the only one in this template.
+                Action: dynamodb:ListStreams
+                Resource: "*"
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref EventStoredTopic
+              - Effect: Allow
+                # The event source mapping delivers failed batches here.
+                Action: sqs:SendMessage
+                Resource: !GetAtt StreamConsumerDLQ.Arn
+
+  StreamConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-stream-consumer-${Stage}
+      CodeUri: ../stream_consumer/
+      Handler: handler.lambda_handler
+      Role: !GetAtt StreamConsumerFunctionRole.Arn
+      Description: Republishes INSERT stream records as SNS event-stored messages
+      Environment:
+        Variables:
+          EVENT_STORED_TOPIC_ARN: !Ref EventStoredTopic
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt EventsTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName":["INSERT"]}'
+            DestinationConfig:
+              OnFailure:
+                Destination: !GetAtt StreamConsumerDLQ.Arn
+
+  StreamConsumerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-stream-consumer-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  # ---- SNS -> SQS -> projection writer (sole writer, buffered/competing) ----
+
+  ProjectionDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub sll-projection-dlq-${Stage}
+      MessageRetentionPeriod: 1209600   # 14 days
+
+  ProjectionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub sll-projection-${Stage}
+      # 2x the 30s function timeout. AWS recommends 6x to avoid reprocessing
+      # during long invocations, but projection writes finish in milliseconds,
+      # so 2x is safe and keeps redrive latency (~maxReceiveCount x VT) low
+      # enough to be operationally observable rather than a ~9 min wait.
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ProjectionDLQ.Arn
+        maxReceiveCount: 3
+
+  ProjectionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ProjectionQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ProjectionQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref EventStoredTopic
+
+  EventStoredToProjectionQueue:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref EventStoredTopic
+      Protocol: sqs
+      Endpoint: !GetAtt ProjectionQueue.Arn
+      RawMessageDelivery: true          # SQS + alerter see the same raw contract
+
+  ProjectionConsumerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: ConsumeQueueWriteProjection
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt ProjectionQueue.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt ProjectionTable.Arn
+
+  ProjectionConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-projection-consumer-${Stage}
+      CodeUri: ../projection_consumer/
+      Handler: handler.lambda_handler
+      Role: !GetAtt ProjectionConsumerFunctionRole.Arn
+      Description: Writes the current-state projection from event-stored messages
+      Environment:
+        Variables:
+          PROJECTION_TABLE_NAME: !Ref ProjectionTable
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProjectionQueue.Arn
+            BatchSize: 10
+
+  ProjectionConsumerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-projection-consumer-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  # ---- SNS -> anomaly alerter (second, independent fan-out consumer) --------
+
+  AnomalyAlerterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: PublishAnomalyMetric
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                # PutMetricData has no resource ARN; constrain by namespace.
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: SmartLivingLedger
+
+  AnomalyAlerterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub sll-alerter-${Stage}
+      CodeUri: ../alerter/
+      Handler: handler.lambda_handler
+      Role: !GetAtt AnomalyAlerterFunctionRole.Arn
+      Description: Flags out-of-range readings as a CloudWatch custom metric
+      Events:
+        Alert:
+          Type: SNS
+          Properties:
+            Topic: !Ref EventStoredTopic
+
+  AnomalyAlerterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/sll-alerter-${Stage}
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  # ---- Alarms for the async path (see docs/adr/0001 for threshold reasoning) -
+
+  StreamConsumerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-stream-consumer-errors-${Stage}
+      AlarmDescription: Stream consumer Lambda errors (publish failures)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref StreamConsumerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  StreamConsumerIteratorAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-stream-iterator-age-${Stage}
+      AlarmDescription: Stream consumer falling behind (async projection lag rising)
+      Namespace: AWS/Lambda
+      MetricName: IteratorAge
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref StreamConsumerFunction
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 60000            # ms; sustained >60s lag between write and fan-out
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ProjectionConsumerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-projection-consumer-errors-${Stage}
+      AlarmDescription: Projection consumer Lambda errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProjectionConsumerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  AlerterErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-alerter-errors-${Stage}
+      AlarmDescription: Anomaly alerter Lambda errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AnomalyAlerterFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ProjectionDLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-projection-dlq-depth-${Stage}
+      AlarmDescription: Poison messages parked in the projection DLQ (needs redrive)
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ProjectionDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  StreamConsumerDLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub sll-stream-consumer-dlq-depth-${Stage}
+      AlarmDescription: Failed stream batches parked in the stream-consumer DLQ
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt StreamConsumerDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
 Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
@@ -279,3 +661,25 @@ Outputs:
   QueryFunctionArn:
     Description: Query Lambda ARN
     Value: !GetAtt QueryFunction.Arn
+
+  ProjectionTableName:
+    Description: DynamoDB projection (current-state) table name
+    Value: !Ref ProjectionTable
+    Export:
+      Name: !Sub sll-projection-table-${Stage}
+
+  EventStoredTopicArn:
+    Description: SNS topic ARN for event-stored fan-out
+    Value: !Ref EventStoredTopic
+
+  StreamConsumerDLQUrl:
+    Description: DLQ for failed stream-consumer batches
+    Value: !Ref StreamConsumerDLQ
+
+  ProjectionQueueUrl:
+    Description: SQS queue feeding the projection writer
+    Value: !Ref ProjectionQueue
+
+  ProjectionDLQUrl:
+    Description: DLQ for poison projection messages (redrive target)
+    Value: !Ref ProjectionDLQ

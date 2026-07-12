@@ -12,4 +12,7 @@ rather than editing history.
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-alarm-thresholds-and-slos.md) | CloudWatch alarm thresholds and SLOs | Accepted |
+| [0002](0002-cdc-via-streams-not-dual-write.md) | CDC via DynamoDB Streams, not an in-Lambda dual write | Accepted |
+| [0003](0003-sns-over-eventbridge-and-fifo.md) | SNS for fan-out (not EventBridge), standard (not FIFO) | Accepted |
+| [0004](0004-delivery-semantics.md) | Delivery semantics across the pipeline | Accepted |
 </content>
