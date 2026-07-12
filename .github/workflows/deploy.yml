@@ -68,12 +68,13 @@ jobs:
       # -----------------------------------------------------------------------
       # 4. Run the unit tests (no AWS needed)
       #    -v = verbose output so failures are easy to read in the Actions log
-      #    We list the AWS-free suites explicitly and skip integration/load
-      #    tests here — those need a deployed stack (SLL_API_URL).
+      #    Runs the whole tests/ dir; the integration/load/async tests skip
+      #    themselves without a deployed stack (SLL_API_URL / queue URLs), so
+      #    this stays AWS-free while covering every unit suite automatically.
       # -----------------------------------------------------------------------
       - name: Run unit tests
         run: |
-          pytest tests/test_schema.py tests/test_http_responses.py tests/test_local_app.py -v --tb=short
+          pytest tests/ -v --tb=short
 
       # -----------------------------------------------------------------------
       # 5. Check code style with flake8 (non-blocking)
