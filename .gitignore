@@ -222,6 +222,7 @@ __pycache__/
 *.pyc
 .env
 
+event.json
 events.json
 local_events.jsonl
 lambda_build/
