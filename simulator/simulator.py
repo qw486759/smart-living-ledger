@@ -11,11 +11,11 @@ import requests
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-_raw_url = os.environ.get("SLL_INGEST_URL", "").strip()
+_raw_url = os.environ.get("EIP_INGEST_URL", "").strip()
 if not _raw_url:
     raise RuntimeError(
-        "SLL_INGEST_URL environment variable is not set.\n"
-        "Run with: $env:SLL_INGEST_URL='https://your-api-url/dev'"
+        "EIP_INGEST_URL environment variable is not set.\n"
+        "Run with: $env:EIP_INGEST_URL='https://your-api-url/dev'"
     )
 BASE_URL = _raw_url.rstrip("/")
 INGEST_URL = f"{BASE_URL}/events"

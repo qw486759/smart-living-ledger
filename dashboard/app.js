@@ -1,4 +1,4 @@
-const API_BASE = (window.SLL_API_BASE || document.body.dataset.apiBase || '').replace(/\/$/, '');
+const API_BASE = (window.EIP_API_BASE || document.body.dataset.apiBase || '').replace(/\/$/, '');
 const REFRESH_INTERVAL_MS = 30_000;
 const TYPE_QUERY_LIMIT = 100;
 
@@ -103,7 +103,7 @@ function initializeCharts() {
 
 async function fetchEvents(params = {}) {
   if (!API_BASE) {
-    throw new Error('Missing query API base URL. Set body[data-api-base] or window.SLL_API_BASE.');
+    throw new Error('Missing query API base URL. Set body[data-api-base] or window.EIP_API_BASE.');
   }
 
   const url = new URL(`${API_BASE}/events`);

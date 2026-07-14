@@ -1,6 +1,6 @@
-# Smart Living Ledger
+# Event-Driven IoT Platform
 
-Smart Living Ledger is a serverless pipeline that ingests events from smart-home
+Event-Driven IoT Platform is a serverless pipeline that ingests events from smart-home
 devices (motion, plug, temperature, voice command), validates and stores them,
 and exposes a query API that backs an internal monitoring dashboard.
 
@@ -166,7 +166,7 @@ local stand-in for a real edge buffer; see roadmap for the production shape.
 ## Repository layout
 
 ```text
-smart-living-ledger/
+event-driven-iot-platform/
 ├── dashboard/index.html        # Dashboard HTML structure
 ├── dashboard/app.js            # Query API fetches and Chart.js rendering
 ├── dashboard/style.css         # Dark responsive dashboard styling
@@ -200,7 +200,7 @@ the Lambda and appends accepted events to `local_events.jsonl`:
 ```bash
 uvicorn ingest.local_app:app --reload
 # in another shell:
-export SLL_INGEST_URL=http://127.0.0.1:8000
+export EIP_INGEST_URL=http://127.0.0.1:8000
 python simulator/simulator.py
 ```
 
@@ -217,14 +217,14 @@ The stack outputs API Gateway URLs. Point the simulator at the API base URL, not
 the `/events` route:
 
 ```bash
-export SLL_INGEST_URL=https://abc123.execute-api.us-east-1.amazonaws.com/dev
+export EIP_INGEST_URL=https://abc123.execute-api.us-east-1.amazonaws.com/dev
 python simulator/simulator.py
 ```
 
 ### Dashboard
 
 Copy `dashboard/config.example.js` to `dashboard/config.js`, set
-`window.SLL_API_BASE` to the Query API Gateway URL, then open
+`window.EIP_API_BASE` to the Query API Gateway URL, then open
 `dashboard/index.html` in a browser. The dashboard is static HTML/JS with no build
 step so there's nothing extra to run or keep patched.
 
@@ -260,7 +260,7 @@ statements. The reasoning behind the specific alarm thresholds is recorded in
 
 ### Logs Insights queries
 
-Open CloudWatch → Logs Insights, select `/aws/lambda/sll-ingest-dev`, then run:
+Open CloudWatch → Logs Insights, select `/aws/lambda/eip-ingest-dev`, then run:
 
 **Events stored per device in the last hour:**
 
@@ -341,9 +341,9 @@ Integration and load tests target a deployed stack, so run them only after
 deploying and configuring credentials:
 
 ```bash
-export SLL_API_URL=https://abc123.execute-api.us-east-1.amazonaws.com/dev
+export EIP_API_URL=https://abc123.execute-api.us-east-1.amazonaws.com/dev
 export AWS_DEFAULT_REGION=us-east-1
-export SLL_TABLE_NAME=sll-events-dev   # change if deployed to a different stage
+export EIP_TABLE_NAME=eip-events-dev   # change if deployed to a different stage
 pytest tests/test_integration.py tests/test_load.py -v
 ```
 

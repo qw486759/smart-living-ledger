@@ -6,11 +6,11 @@ import pytest
 
 @pytest.fixture
 def api_url():
-    url = os.environ.get("SLL_API_URL")
+    url = os.environ.get("EIP_API_URL")
     if not url:
         pytest.skip(
-            "SLL_API_URL not set — skipping integration/load tests. "
-            "Run with: $env:SLL_API_URL='https://your-api-url/dev'"
+            "EIP_API_URL not set — skipping integration/load tests. "
+            "Run with: $env:EIP_API_URL='https://your-api-url/dev'"
         )
     return url.rstrip("/")
 
@@ -64,7 +64,7 @@ def valid_voice_payload():
 def cleanup_test_items():
     """Delete any DynamoDB items written by tests after each test."""
     yield
-    table_name = os.environ.get("TABLE_NAME", "sll-events-dev")
+    table_name = os.environ.get("TABLE_NAME", "eip-events-dev")
     region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     if not table_name:
         return

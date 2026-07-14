@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy.sh — Build and deploy Smart Living Ledger to AWS via SAM
+# deploy.sh — Build and deploy Event-Driven IoT Platform to AWS via SAM
 #
 # Usage:
 #   ./deploy.sh           # deploy to dev
@@ -31,7 +31,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Colour
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${BLUE}  Smart Living Ledger — Deploy to: ${YELLOW}${STAGE}${NC}"
+echo -e "${BLUE}  Event-Driven IoT Platform — Deploy to: ${YELLOW}${STAGE}${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # ── Safety check for prod ──────────────────────────────────────────────────
@@ -71,7 +71,7 @@ sam deploy \
     --config-env "$STAGE"
 
 # ── 4. Print outputs ───────────────────────────────────────────────────────
-STACK_NAME="smart-living-ledger-${STAGE}"
+STACK_NAME="event-driven-iot-platform-${STAGE}"
 echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Deploy complete! Stack outputs:${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -83,10 +83,10 @@ aws cloudformation describe-stacks \
 
 echo -e "\n${YELLOW}Next steps:${NC}"
 echo "  1. Run the simulator:"
-echo "     export SLL_INGEST_URL=<IngestEndpoint above>"
+echo "     export EIP_INGEST_URL=<IngestEndpoint above>"
 echo "     python simulator/simulator.py"
 echo ""
 echo "  2. Open the dashboard:"
 echo "     Copy dashboard/config.example.js to dashboard/config.js"
-echo "     Set window.SLL_API_BASE to <QueryEndpoint above>"
+echo "     Set window.EIP_API_BASE to <QueryEndpoint above>"
 echo "     Open dashboard/index.html in a browser"

@@ -9,7 +9,7 @@ from ingest.schema import ValidationError, validate_event
 
 EVENTS_FILE = Path("local_events.jsonl")
 
-app = FastAPI(title="Smart Living Ledger Local Ingest")
+app = FastAPI(title="Event-Driven IoT Platform Local Ingest")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

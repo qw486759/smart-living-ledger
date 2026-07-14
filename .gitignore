@@ -242,3 +242,4 @@ dashboard/config.js
 simulator/dead_letter.jsonl
 # Private working analysis (not part of the shipped repo)
 REPO_ANALYSIS.md
+interview-prep/

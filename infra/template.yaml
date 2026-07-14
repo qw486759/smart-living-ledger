@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Smart Living Ledger - IoT event pipeline.
+  Event-Driven IoT Platform - IoT event pipeline.
   Ingests smart home device events via API Gateway + Lambda,
   stores in DynamoDB, and exposes a query API for the dashboard.
 
@@ -16,7 +16,7 @@ Parameters:
     Type: String
     Default: ""
     Description: >
-      DynamoDB table name. Leave blank to auto-generate as sll-events-{Stage}.
+      DynamoDB table name. Leave blank to auto-generate as eip-events-{Stage}.
 
   TTLDays:
     Type: Number
@@ -35,7 +35,7 @@ Globals:
         TTL_DAYS: !Ref TTLDays
     Tracing: Active
     Tags:
-      Project: smart-living-ledger
+      Project: event-driven-iot-platform
       Stage: !Ref Stage
 
 Conditions:
@@ -51,7 +51,7 @@ Resources:
     Properties:
       TableName: !If
         - UseDefaultTableName
-        - !Sub "sll-events-${Stage}"
+        - !Sub "eip-events-${Stage}"
         - !Ref TableName
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -89,7 +89,7 @@ Resources:
         PointInTimeRecoveryEnabled: true
       Tags:
         - Key: Project
-          Value: smart-living-ledger
+          Value: event-driven-iot-platform
         - Key: Stage
           Value: !Ref Stage
 
@@ -119,7 +119,7 @@ Resources:
   IngestFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub sll-ingest-${Stage}
+      FunctionName: !Sub eip-ingest-${Stage}
       CodeUri: ../ingest/
       Handler: handler.lambda_handler
       Role: !GetAtt IngestFunctionRole.Arn
@@ -128,7 +128,7 @@ Resources:
         IngestEvent:
           Type: Api
           Properties:
-            RestApiId: !Ref SLLApi
+            RestApiId: !Ref EipApi
             Path: /events
             Method: POST
 
@@ -163,7 +163,7 @@ Resources:
   QueryFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub sll-query-${Stage}
+      FunctionName: !Sub eip-query-${Stage}
       CodeUri: ../query/
       Handler: handler.lambda_handler
       Role: !GetAtt QueryFunctionRole.Arn
@@ -172,21 +172,21 @@ Resources:
         GetAllEvents:
           Type: Api
           Properties:
-            RestApiId: !Ref SLLApi
+            RestApiId: !Ref EipApi
             Path: /events
             Method: GET
         GetDeviceEvents:
           Type: Api
           Properties:
-            RestApiId: !Ref SLLApi
+            RestApiId: !Ref EipApi
             Path: /events/{device_id}
             Method: GET
 
-  SLLApi:
+  EipApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Stage
-      Description: Smart Living Ledger IoT ingestion and query API
+      Description: Event-Driven IoT Platform IoT ingestion and query API
       MethodSettings:
         - ResourcePath: '/*'
           HttpMethod: '*'
@@ -202,25 +202,25 @@ Resources:
   IngestLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/sll-ingest-${Stage}
+      LogGroupName: !Sub /aws/lambda/eip-ingest-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
   QueryLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/sll-query-${Stage}
+      LogGroupName: !Sub /aws/lambda/eip-query-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
   ApiAccessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/apigateway/sll-api-${Stage}
+      LogGroupName: !Sub /aws/apigateway/eip-api-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
   IngestErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-ingest-errors-${Stage}
+      AlarmName: !Sub eip-ingest-errors-${Stage}
       AlarmDescription: Ingest Lambda error count exceeds threshold in 5 min window
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -237,7 +237,7 @@ Resources:
   IngestLatencyAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-ingest-p95-latency-${Stage}
+      AlarmName: !Sub eip-ingest-p95-latency-${Stage}
       AlarmDescription: Ingest Lambda P95 duration exceeds 3000ms
       Namespace: AWS/Lambda
       MetricName: Duration
@@ -254,7 +254,7 @@ Resources:
   QueryErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-query-errors-${Stage}
+      AlarmName: !Sub eip-query-errors-${Stage}
       AlarmDescription: Query Lambda error count exceeds threshold
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -278,7 +278,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      TableName: !Sub sll-projection-${Stage}
+      TableName: !Sub eip-projection-${Stage}
       BillingMode: PAY_PER_REQUEST
       # Current-state-per-device read model: one item per (type, device).
       AttributeDefinitions:
@@ -293,19 +293,19 @@ Resources:
           KeyType: RANGE
       Tags:
         - Key: Project
-          Value: smart-living-ledger
+          Value: event-driven-iot-platform
         - Key: Stage
           Value: !Ref Stage
 
   EventStoredTopic:
     Type: AWS::SNS::Topic
     Properties:
-      TopicName: !Sub sll-event-stored-${Stage}
+      TopicName: !Sub eip-event-stored-${Stage}
 
   StreamConsumerDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub sll-stream-consumer-dlq-${Stage}
+      QueueName: !Sub eip-stream-consumer-dlq-${Stage}
       MessageRetentionPeriod: 1209600   # 14 days
 
   StreamConsumerFunctionRole:
@@ -348,7 +348,7 @@ Resources:
   StreamConsumerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub sll-stream-consumer-${Stage}
+      FunctionName: !Sub eip-stream-consumer-${Stage}
       CodeUri: ../stream_consumer/
       Handler: handler.lambda_handler
       Role: !GetAtt StreamConsumerFunctionRole.Arn
@@ -375,7 +375,7 @@ Resources:
   StreamConsumerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/sll-stream-consumer-${Stage}
+      LogGroupName: !Sub /aws/lambda/eip-stream-consumer-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
   # ---- SNS -> SQS -> projection writer (sole writer, buffered/competing) ----
@@ -383,13 +383,13 @@ Resources:
   ProjectionDLQ:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub sll-projection-dlq-${Stage}
+      QueueName: !Sub eip-projection-dlq-${Stage}
       MessageRetentionPeriod: 1209600   # 14 days
 
   ProjectionQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: !Sub sll-projection-${Stage}
+      QueueName: !Sub eip-projection-${Stage}
       # 2x the 30s function timeout. AWS recommends 6x to avoid reprocessing
       # during long invocations, but projection writes finish in milliseconds,
       # so 2x is safe and keeps redrive latency (~maxReceiveCount x VT) low
@@ -456,7 +456,7 @@ Resources:
   ProjectionConsumerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub sll-projection-consumer-${Stage}
+      FunctionName: !Sub eip-projection-consumer-${Stage}
       CodeUri: ../projection_consumer/
       Handler: handler.lambda_handler
       Role: !GetAtt ProjectionConsumerFunctionRole.Arn
@@ -474,7 +474,7 @@ Resources:
   ProjectionConsumerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/sll-projection-consumer-${Stage}
+      LogGroupName: !Sub /aws/lambda/eip-projection-consumer-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
   # ---- SNS -> anomaly alerter (second, independent fan-out consumer) --------
@@ -503,12 +503,12 @@ Resources:
                 Resource: "*"
                 Condition:
                   StringEquals:
-                    cloudwatch:namespace: SmartLivingLedger
+                    cloudwatch:namespace: EventDrivenIotPlatform
 
   AnomalyAlerterFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub sll-alerter-${Stage}
+      FunctionName: !Sub eip-alerter-${Stage}
       CodeUri: ../alerter/
       Handler: handler.lambda_handler
       Role: !GetAtt AnomalyAlerterFunctionRole.Arn
@@ -522,7 +522,7 @@ Resources:
   AnomalyAlerterLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/sll-alerter-${Stage}
+      LogGroupName: !Sub /aws/lambda/eip-alerter-${Stage}
       RetentionInDays: !If [IsProd, 90, 14]
 
   # ---- Alarms for the async path (see docs/adr/0001 for threshold reasoning) -
@@ -530,7 +530,7 @@ Resources:
   StreamConsumerErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-stream-consumer-errors-${Stage}
+      AlarmName: !Sub eip-stream-consumer-errors-${Stage}
       AlarmDescription: Stream consumer Lambda errors (publish failures)
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -547,7 +547,7 @@ Resources:
   StreamConsumerIteratorAgeAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-stream-iterator-age-${Stage}
+      AlarmName: !Sub eip-stream-iterator-age-${Stage}
       AlarmDescription: Stream consumer falling behind (async projection lag rising)
       Namespace: AWS/Lambda
       MetricName: IteratorAge
@@ -564,7 +564,7 @@ Resources:
   ProjectionConsumerErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-projection-consumer-errors-${Stage}
+      AlarmName: !Sub eip-projection-consumer-errors-${Stage}
       AlarmDescription: Projection consumer Lambda errors
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -581,7 +581,7 @@ Resources:
   AlerterErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-alerter-errors-${Stage}
+      AlarmName: !Sub eip-alerter-errors-${Stage}
       AlarmDescription: Anomaly alerter Lambda errors
       Namespace: AWS/Lambda
       MetricName: Errors
@@ -598,7 +598,7 @@ Resources:
   ProjectionDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-projection-dlq-depth-${Stage}
+      AlarmName: !Sub eip-projection-dlq-depth-${Stage}
       AlarmDescription: Poison messages parked in the projection DLQ (needs redrive)
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
@@ -615,7 +615,7 @@ Resources:
   StreamConsumerDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub sll-stream-consumer-dlq-depth-${Stage}
+      AlarmName: !Sub eip-stream-consumer-dlq-depth-${Stage}
       AlarmDescription: Failed stream batches parked in the stream-consumer DLQ
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
@@ -632,23 +632,23 @@ Resources:
 Outputs:
   ApiBaseUrl:
     Description: API Gateway base URL
-    Value: !Sub https://${SLLApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+    Value: !Sub https://${EipApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
     Export:
-      Name: !Sub sll-api-url-${Stage}
+      Name: !Sub eip-api-url-${Stage}
 
   IngestEndpoint:
     Description: POST endpoint for device events
-    Value: !Sub https://${SLLApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events
+    Value: !Sub https://${EipApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events
 
   QueryEndpoint:
     Description: GET endpoint for dashboard queries
-    Value: !Sub https://${SLLApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events
+    Value: !Sub https://${EipApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events
 
   EventsTableName:
     Description: DynamoDB table name
     Value: !Ref EventsTable
     Export:
-      Name: !Sub sll-table-name-${Stage}
+      Name: !Sub eip-table-name-${Stage}
 
   EventsTableArn:
     Description: DynamoDB table ARN
@@ -666,7 +666,7 @@ Outputs:
     Description: DynamoDB projection (current-state) table name
     Value: !Ref ProjectionTable
     Export:
-      Name: !Sub sll-projection-table-${Stage}
+      Name: !Sub eip-projection-table-${Stage}
 
   EventStoredTopicArn:
     Description: SNS topic ARN for event-stored fan-out

@@ -4,11 +4,11 @@ test_integration.py). The redrive test intentionally waits a few minutes for a
 poison message to exhaust its receive count and land in the DLQ.
 
 Env:
-  SLL_API_URL            ingest/query API base (via conftest fixtures)
+  EIP_API_URL            ingest/query API base (via conftest fixtures)
   AWS_DEFAULT_REGION     default us-east-1
-  SLL_STAGE              default dev (used to derive default resource names)
-  SLL_PROJECTION_TABLE   default sll-projection-<stage>
-  SLL_PROJECTION_QUEUE_URL / SLL_PROJECTION_DLQ_URL  required for the redrive test
+  EIP_STAGE              default dev (used to derive default resource names)
+  EIP_PROJECTION_TABLE   default eip-projection-<stage>
+  EIP_PROJECTION_QUEUE_URL / EIP_PROJECTION_DLQ_URL  required for the redrive test
 """
 import os
 import time
@@ -18,9 +18,9 @@ import pytest
 import requests
 
 REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-STAGE = os.environ.get("SLL_STAGE", "dev")
-PROJECTION_TABLE = os.environ.get("SLL_PROJECTION_TABLE", f"sll-projection-{STAGE}")
-METRIC_NAMESPACE = "SmartLivingLedger"
+STAGE = os.environ.get("EIP_STAGE", "dev")
+PROJECTION_TABLE = os.environ.get("EIP_PROJECTION_TABLE", f"eip-projection-{STAGE}")
+METRIC_NAMESPACE = "EventDrivenIotPlatform"
 
 dynamodb = boto3.resource("dynamodb", region_name=REGION)
 sqs = boto3.client("sqs", region_name=REGION)
@@ -84,10 +84,10 @@ def test_anomaly_emits_metric(ingest_url):
 
 
 def test_poison_message_redrives_to_dlq():
-    queue_url = os.environ.get("SLL_PROJECTION_QUEUE_URL")
-    dlq_url = os.environ.get("SLL_PROJECTION_DLQ_URL")
+    queue_url = os.environ.get("EIP_PROJECTION_QUEUE_URL")
+    dlq_url = os.environ.get("EIP_PROJECTION_DLQ_URL")
     if not queue_url or not dlq_url:
-        pytest.skip("set SLL_PROJECTION_QUEUE_URL and SLL_PROJECTION_DLQ_URL")
+        pytest.skip("set EIP_PROJECTION_QUEUE_URL and EIP_PROJECTION_DLQ_URL")
 
     marker = f"poison-{int(time.time())}"
     sqs.send_message(QueueUrl=queue_url, MessageBody=f"not-json::{marker}")

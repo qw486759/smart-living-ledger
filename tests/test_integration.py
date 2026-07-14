@@ -5,7 +5,7 @@ import boto3
 import requests
 
 REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-TABLE_NAME = os.environ.get("SLL_TABLE_NAME", "sll-events-dev")
+TABLE_NAME = os.environ.get("EIP_TABLE_NAME", "eip-events-dev")
 
 dynamodb = boto3.resource("dynamodb", region_name=REGION)
 table = dynamodb.Table(TABLE_NAME)

@@ -4,7 +4,7 @@ version = 0.1
 use_container = false
 
 [default.deploy.parameters]
-stack_name = "smart-living-ledger-dev"
+stack_name = "event-driven-iot-platform-dev"
 region = "us-east-1"
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
 confirm_changeset = false

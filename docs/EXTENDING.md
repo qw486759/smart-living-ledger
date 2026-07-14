@@ -1,4 +1,4 @@
-# Extending Smart Living Ledger
+# Extending Event-Driven IoT Platform
 
 ## Adding a new device type
 

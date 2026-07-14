@@ -59,7 +59,7 @@ def test_handler_emits_metric_on_anomaly(monkeypatch):
     assert len(spy.calls) == 1
     dims = {d["Name"]: d["Value"] for d in spy.calls[0]["MetricData"][0]["Dimensions"]}
     assert dims["AnomalyType"] == "temp_over_max"
-    assert spy.calls[0]["Namespace"] == "SmartLivingLedger"
+    assert spy.calls[0]["Namespace"] == "EventDrivenIotPlatform"
 
 
 def test_handler_silent_on_normal_reading(monkeypatch):

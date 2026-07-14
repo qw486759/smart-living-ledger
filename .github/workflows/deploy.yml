@@ -1,5 +1,5 @@
 # =============================================================================
-# Smart Living Ledger — CI/CD Pipeline
+# Event-Driven IoT Platform — CI/CD Pipeline
 # =============================================================================
 # Two jobs run in sequence:
 #   1. test  — runs on every push to any branch (catches bugs early)
@@ -9,7 +9,7 @@
 # Only reviewed, merged code reaches AWS.
 # =============================================================================
 
-name: Smart Living Ledger CI/CD
+name: Event-Driven IoT Platform CI/CD
 
 # ---------------------------------------------------------------------------
 # Triggers: when does this workflow run?
@@ -27,7 +27,7 @@ on:
 # ---------------------------------------------------------------------------
 env:
   AWS_REGION: us-east-1          # Change to your region if different
-  SAM_STACK_NAME: smart-living-ledger-dev
+  SAM_STACK_NAME: event-driven-iot-platform-dev
   PYTHON_VERSION: "3.11"
 
 # =============================================================================
@@ -69,7 +69,7 @@ jobs:
       # 4. Run the unit tests (no AWS needed)
       #    -v = verbose output so failures are easy to read in the Actions log
       #    Runs the whole tests/ dir; the integration/load/async tests skip
-      #    themselves without a deployed stack (SLL_API_URL / queue URLs), so
+      #    themselves without a deployed stack (EIP_API_URL / queue URLs), so
       #    this stays AWS-free while covering every unit suite automatically.
       # -----------------------------------------------------------------------
       - name: Run unit tests

@@ -9,7 +9,7 @@ from rules import evaluate
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-METRIC_NAMESPACE = "SmartLivingLedger"
+METRIC_NAMESPACE = "EventDrivenIotPlatform"
 STAGE = os.environ.get("STAGE", "dev")
 
 cloudwatch = boto3.client("cloudwatch")

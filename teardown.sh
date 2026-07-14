@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# teardown.sh — Delete the Smart Living Ledger CloudFormation stack
+# teardown.sh — Delete the Event-Driven IoT Platform CloudFormation stack
 #
 # Usage:
 #   ./teardown.sh           # delete dev stack
@@ -11,7 +11,7 @@
 #   lose all your IoT event history by running `sam delete`.
 #
 #   To delete the table manually after teardown:
-#     aws dynamodb delete-table --table-name sll-events
+#     aws dynamodb delete-table --table-name eip-events
 #
 # Why keep a teardown script?
 #   The stack is throwaway per stage (dev/staging), so we need a repeatable
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 STAGE="${1:-dev}"
-STACK_NAME="smart-living-ledger-${STAGE}"
+STACK_NAME="event-driven-iot-platform-${STAGE}"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -29,7 +29,7 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${RED}  Smart Living Ledger — TEARDOWN: ${YELLOW}${STAGE}${NC}"
+echo -e "${RED}  Event-Driven IoT Platform — TEARDOWN: ${YELLOW}${STAGE}${NC}"
 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "${YELLOW}This will delete:${NC}"
@@ -39,7 +39,7 @@ echo "  - IAM roles"
 echo "  - CloudWatch alarms and log groups"
 echo ""
 echo -e "${GREEN}This will NOT delete (DeletionPolicy: Retain):${NC}"
-echo "  - DynamoDB table: sll-events"
+echo "  - DynamoDB table: eip-events"
 echo ""
 echo -e "${RED}Type the stack name to confirm: ${YELLOW}${STACK_NAME}${NC}"
 read -r confirm
@@ -57,9 +57,9 @@ sam delete \
 
 echo -e "\n${GREEN}✓ Stack deleted.${NC}"
 echo ""
-echo -e "${YELLOW}Note:${NC} DynamoDB table 'sll-events' was retained."
+echo -e "${YELLOW}Note:${NC} DynamoDB table 'eip-events' was retained."
 echo "To delete it manually:"
-echo "  aws dynamodb delete-table --table-name sll-events"
+echo "  aws dynamodb delete-table --table-name eip-events"
 echo ""
 echo "To redeploy from scratch:"
 echo "  ./deploy.sh ${STAGE}"
