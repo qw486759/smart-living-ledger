@@ -1,83 +1,50 @@
-# Event-Driven IoT Platform
+# Cat-Welfare Monitoring Platform
 
-Event-Driven IoT Platform is a serverless pipeline that ingests events from smart-home
-devices (motion, plug, temperature, voice command), validates and stores them,
-and exposes a query API that backs an internal monitoring dashboard.
+An event-driven, serverless platform that monitors the welfare of a specific outdoor
+cat ("Zeus") through home sensors. A Tapo camera's motion is gated at the edge;
+candidate frames are recognised in the cloud (Amazon Bedrock vision — "is this
+Zeus?"); a confirmed sighting flows through an ingest → CDC fan-out → projection
+pipeline that powers welfare alerts (long absence, drop in food intake), a dashboard,
+and a daily LLM-written welfare summary.
 
-This README is for engineers who will run, debug, and extend the system. If you
-are on call, start with [`docs/RUNBOOK.md`](docs/RUNBOOK.md). If you are adding a
-device type or otherwise changing behaviour, start with
-[`docs/EXTENDING.md`](docs/EXTENDING.md). Decisions with lasting consequences are
-recorded under [`docs/adr/`](docs/adr/).
+> Built on a serverless event pipeline (originally a smart-home telemetry demo),
+> re-pointed at a real subject. It exercises four things end to end: **coding**,
+> **architecture**, **LLM** (Bedrock vision + summary), and **cloud** (AWS).
+
+**Start here:**
+
+- Architecture, C4 diagrams, tiers → [`docs/platform/architecture.md`](docs/platform/architecture.md)
+- Non-functional targets, SLOs, privacy → [`docs/platform/nfr-and-slos.md`](docs/platform/nfr-and-slos.md)
+- Cost model → [`docs/platform/cost-model.md`](docs/platform/cost-model.md)
+- Build order → [`docs/platform/roadmap.md`](docs/platform/roadmap.md)
+- Decisions with lasting consequences → [`docs/adr/`](docs/adr/)
+- On-call → [`docs/RUNBOOK.md`](docs/RUNBOOK.md); adding a sensor/type → [`docs/EXTENDING.md`](docs/EXTENDING.md)
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    subgraph SIM["Device simulator (local)"]
-        M["motion-sensor-001"]
-        P["smart-plug-001"]
-        T["temp-sensor-001"]
-        V["voice-device-001"]
-    end
-
-    subgraph AWS["AWS serverless pipeline"]
-        APIGW["API Gateway\nPOST /events"]
-        LINGEST["Ingest Lambda\nvalidate + PutItem"]
-        DB[("DynamoDB\nPK device_id · SK ts\nTTL expire_at")]
-        LQUERY["Query Lambda\nGET /events"]
-        CW["CloudWatch\nerrors + p95 duration"]
-    end
-
-    subgraph ASYNC["Async fan-out (CDC)"]
-        STREAM["Stream consumer\nINSERT → publish"]
-        SNS(["SNS event-stored"])
-        SQS["SQS + DLQ"]
-        PROJC["Projection consumer\nts-versioned write"]
-        PROJDB[("Projection table\ncurrent state per device")]
-        ALERT["Anomaly alerter\nCloudWatch metric"]
-    end
-
-    subgraph DASH["Ops dashboard"]
-        UI["HTML + Chart.js"]
-    end
-
-    M --> APIGW
-    P --> APIGW
-    T --> APIGW
-    V --> APIGW
-    APIGW --> LINGEST
-    LINGEST --> DB
-    LINGEST -. logs/metrics .-> CW
-    DB --> LQUERY
-    LQUERY --> UI
-    DB -- stream (NEW_IMAGE) --> STREAM
-    STREAM --> SNS
-    SNS --> SQS --> PROJC --> PROJDB
-    SNS --> ALERT -. metric .-> CW
+flowchart LR
+    CAM["Tapo camera"] --> EDGE["Edge Bridge\nmotion + animal gate"]
+    EDGE -- candidate frame --> S3[("S3\nencrypted · 7d TTL")]
+    S3 --> ENRICH["Enrichment\nBedrock VLM: is this Zeus?"]
+    ENRICH -- "sighting" --> ING["API Gateway → Ingest λ → DynamoDB"]
+    ING -- "stream (CDC)" --> FAN["SNS → SQS+DLQ → projection / alerter"]
+    FAN --> NOTIFY["welfare alerts → LINE/SMS"]
+    ING --> Q["Query λ → Zeus dashboard"]
+    ROLL["daily rollup"] --> SUM["Bedrock welfare summary"] --> NOTIFY
 ```
 
-The system has three paths:
+In short: a Tapo camera's motion is gated on the edge; only candidate frames reach
+the cloud, where a Bedrock vision model confirms it's Zeus (not another cat, a
+raccoon, or wind); the confirmed `sighting` enters the proven ingest → CDC fan-out →
+projection pipeline that drives welfare alerts, the dashboard, and a daily welfare
+summary.
 
-- **Write path (synchronous):** simulator → `POST /events` (API Gateway) → ingest
-  Lambda (validate → conditional `PutItem`) → DynamoDB.
-- **Read path (synchronous):** dashboard → `GET /events` (API Gateway) → query
-  Lambda → DynamoDB (device-scoped or type-ts GSI `Query`) → charts.
-- **Async fan-out (change data capture):** DynamoDB stream → stream consumer →
-  SNS → {SQS → projection consumer → projection table} and {anomaly alerter →
-  CloudWatch metric}. Why it's shaped this way is recorded in
-  [`docs/adr/0002`–`0004`](docs/adr/); operating it is in
-  [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
-
-Flow in words:
-
-1. The simulator runs one thread per device and emits an event every 1–5 seconds.
-2. API Gateway forwards `POST /events` to the ingest Lambda.
-3. The ingest Lambda validates JSON shape, event type, payload ranges, and
-   timestamp skew before writing to DynamoDB.
-4. DynamoDB stores events under `device_id` + `ts` and expires them after 30 days.
-5. The dashboard polls recent events and renders current state, temperature
-   history, plug wattage, and per-device status.
+**Full detail** — C4 diagrams, tier-by-tier walkthrough, the three paths (async
+recognition → sync ingest; CDC fan-out; read path), and the entity-vs-device model —
+is in [`docs/platform/architecture.md`](docs/platform/architecture.md). Why each
+piece is shaped this way is under [`docs/adr/`](docs/adr/); operating it is in
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 ## How it works, and why it's shaped this way
 
@@ -230,18 +197,17 @@ step so there's nothing extra to run or keep patched.
 
 ## Dashboard (internal ops view)
 
-The dashboard is the team's at-a-glance view of device health and pipeline
-liveness — not a customer-facing product surface. It queries the query Lambda and
-renders four panels in a 2×2 grid:
+The dashboard is the caretaker's at-a-glance view of Zeus's welfare and pipeline
+liveness — not a customer-facing product surface. It queries the query Lambda (event
+log + entity-state projection) and renders:
 
-- **Temperature** — line chart of recent °C readings from `temp-sensor-001`
-- **Smart Plug** — bar chart of average wattage per hour from `smart-plug-001`
-- **Motion Sensor** — status card showing last detected state and timestamp
-- **Voice Command** — status card showing last command and timestamp
+- **Last seen** — when Zeus was last confirmed, by which sensor
+- **Food intake** — daily grams vs the 7-day baseline
+- **Sightings** — time-of-day heatmap of confirmed sightings
+- **Welfare / alerts** — current concern level and any active alert (long absence, intake drop)
 
-It auto-refreshes every 30 seconds. If a panel shows `--` or the error banner
-appears, that usually means the read path or the table is degraded — see the
-runbook.
+It auto-refreshes periodically. If a panel shows `--` or the error banner appears,
+the read path or a table is degraded — see the runbook.
 
 ![Dashboard](docs/dashboard-screenshot.png)
 
@@ -292,42 +258,27 @@ filter @type = "REPORT"
 
 ## Capacity & cost profile
 
-Rough usage if the simulator runs continuously at its default rate (4 devices ×
-~1 event every 3 s ≈ 80 events/min ≈ 3.5M events/month, retained for 30 days):
-
-| Service | Usage | Monthly (USD, us-east-1 on-demand) |
-|---|---|---|
-| API Gateway | 3.5M requests × $3.50/M | ~$12.25 |
-| Lambda (ingest) | 3.5M × 256 MB × ~50 ms | ~$0.03 |
-| Lambda (query) | ~10K dashboard polls | < $0.01 |
-| DynamoDB write | 3.5M WCU × $1.25/M | ~$4.38 |
-| DynamoDB read | ~10K scans | < $0.01 |
-| DynamoDB storage | TTL caps table at ~700 MB | ~$0.18 |
-| CloudWatch Logs | ~1 GB ingest × $0.50/GB | ~$0.50 |
-| **Total** | | **~$17/month** |
-
-The point of this table is capacity planning, not a price tag: **API Gateway
-requests and DynamoDB writes are >90% of the bill and both scale linearly with
-event rate.** If ingestion volume climbs, those are the two dials to watch, and
-batching or moving ingestion to IoT Core is where the savings would come from.
-The `ts`-based TTL is what keeps storage flat rather than growing without bound.
+Full breakdown, assumptions, and the dials are in
+[`docs/platform/cost-model.md`](docs/platform/cost-model.md). In short: real Zeus
+volume is low, so the non-LLM pipeline is near-zero and the bill (~**$3–10/month**) is
+dominated by **Bedrock recognition** — the one genuinely useful line, tunable from
+~$1 (Nova Lite) to ~$7 (Claude Sonnet) by model choice. Prompt caching on the fixed
+reference photos + system prompt, and the edge gate that limits candidate frames, are
+the main levers. The `ts`-based TTL and the 7-day S3 lifecycle keep storage flat.
 
 ## Known limitations & roadmap
 
-Current shortcuts and what would replace them, roughly in priority order:
+Build order and per-file work are in
+[`docs/platform/roadmap.md`](docs/platform/roadmap.md) (Phase 0: pipeline + real data,
+no hardware → Phase 1: Tapo camera + feeder scale + Edge Bridge → Phase 2: Bedrock
+recognition + LLM welfare summary + notification). The honest shortcuts still open:
 
-- **No edge buffer.** The simulator dead-letters to a local file; real devices
-  should persist unsent events locally or publish through a queue so short
-  outages don't drop telemetry.
-- **Telemetry and command/control share one path.** A late temperature reading is
-  tolerable; a late lock/alarm command is not. These deserve separate auth,
-  latency budgets, and alarms.
-- **No auth and open CORS.** The API has no auth layer and CORS is `*`. Before
-  this leaves a trusted account it needs an auth story (API keys for rate
-  limiting, Cognito for user scope, IAM for service-to-service, or IoT Core
-  certificates for device identity) and CORS locked to the dashboard origin.
-- **No multi-tenant isolation.** `device_id` as the partition key is simple; a
-  real deployment needs account/home ownership and authorization on query paths.
+- **Edge buffer is the Phase 1 deliverable.** Until the Edge Bridge lands, a dropped
+  frame is a dropped sighting.
+- **No auth, open CORS.** Fine inside a trusted account; needs API keys / Cognito /
+  IoT Core certs and a locked CORS origin before it leaves one.
+- **Single subject.** `entity` is modelled but only `zeus` exists; multi-subject
+  needs `entity` as an authorization boundary ([ADR-0006](docs/adr/0006-entity-vs-device-modeling.md)).
 
 ## Testing
 

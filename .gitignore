@@ -243,3 +243,14 @@ simulator/dead_letter.jsonl
 # Private working analysis (not part of the shipped repo)
 REPO_ANALYSIS.md
 interview-prep/
+
+# Camera frames (private) — never commit
+edge/*.jpg
+edge/*.jpeg
+edge/frames/
+edge/buffer/
+edge/.env
+
+# Private review photos (real home/street frames) and the WSL virtualenv
+TEMP/
+.venv-wsl/

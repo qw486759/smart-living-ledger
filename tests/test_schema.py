@@ -166,3 +166,186 @@ def test_rejects_timestamp_one_second_beyond_clock_skew_boundary():
                 "ts": make_ts(MAX_CLOCK_SKEW_SECONDS + 2),
             }
         )
+
+
+# --- Cat-welfare event types: sighting + feeding ---
+
+
+def test_accepts_vision_confirmed_sighting_event():
+    event = validate_event(
+        {
+            "device_id": "tapo-cam-porch",
+            "type": "sighting",
+            "payload": {"zone": "porch", "confidence": 0.97, "source": "vision"},
+            "ts": make_ts(),
+        }
+    )
+    assert event["payload"]["confidence"] == 0.97
+
+
+def test_accepts_manual_sighting_checkin_at_full_confidence():
+    event = validate_event(
+        {
+            "device_id": "manual",
+            "type": "sighting",
+            "payload": {"zone": "backyard", "confidence": 1.0, "source": "manual"},
+            "ts": make_ts(),
+        }
+    )
+    assert event["payload"]["source"] == "manual"
+
+
+def test_rejects_sighting_confidence_above_one():
+    with pytest.raises(ValidationError, match="confidence"):
+        validate_event(
+            {
+                "device_id": "tapo-cam-porch",
+                "type": "sighting",
+                "payload": {"zone": "porch", "confidence": 1.4, "source": "vision"},
+                "ts": make_ts(),
+            }
+        )
+
+
+def test_rejects_sighting_without_zone():
+    with pytest.raises(ValidationError, match="zone"):
+        validate_event(
+            {
+                "device_id": "tapo-cam-porch",
+                "type": "sighting",
+                "payload": {"confidence": 0.9, "source": "vision"},
+                "ts": make_ts(),
+            }
+        )
+
+
+def test_accepts_feeding_event_with_duration():
+    event = validate_event(
+        {
+            "device_id": "feeder-scale-01",
+            "type": "feeding",
+            "payload": {"grams": 42.5, "duration_s": 90},
+            "ts": make_ts(),
+        }
+    )
+    assert event["payload"]["grams"] == 42.5
+
+
+def test_accepts_feeding_event_without_optional_duration():
+    event = validate_event(
+        {
+            "device_id": "feeder-scale-01",
+            "type": "feeding",
+            "payload": {"grams": 30.0},
+            "ts": make_ts(),
+        }
+    )
+    assert event["payload"]["grams"] == 30.0
+
+
+def test_rejects_negative_feeding_grams():
+    with pytest.raises(ValidationError, match="grams"):
+        validate_event(
+            {
+                "device_id": "feeder-scale-01",
+                "type": "feeding",
+                "payload": {"grams": -5.0},
+                "ts": make_ts(),
+            }
+        )
+
+
+def test_rejects_feeding_grams_above_sane_max():
+    with pytest.raises(ValidationError, match="grams"):
+        validate_event(
+            {
+                "device_id": "feeder-scale-01",
+                "type": "feeding",
+                "payload": {"grams": 9999.0},
+                "ts": make_ts(),
+            }
+        )
+
+
+def test_accepts_sighting_with_co_presence_fields():
+    event = validate_event(
+        {
+            "device_id": "tapo-cam-porch",
+            "type": "sighting",
+            "payload": {
+                "zone": "porch",
+                "confidence": 0.95,
+                "source": "vision",
+                "animal_count": 2,
+                "others_present": True,
+            },
+            "ts": make_ts(),
+        }
+    )
+    assert event["payload"]["others_present"] is True
+
+
+def test_rejects_sighting_animal_count_below_one():
+    with pytest.raises(ValidationError, match="animal_count"):
+        validate_event(
+            {
+                "device_id": "tapo-cam-porch",
+                "type": "sighting",
+                "payload": {
+                    "zone": "porch",
+                    "confidence": 0.9,
+                    "source": "vision",
+                    "animal_count": 0,
+                },
+                "ts": make_ts(),
+            }
+        )
+
+
+def test_rejects_sighting_others_present_non_bool():
+    with pytest.raises(ValidationError, match="others_present"):
+        validate_event(
+            {
+                "device_id": "tapo-cam-porch",
+                "type": "sighting",
+                "payload": {
+                    "zone": "porch",
+                    "confidence": 0.9,
+                    "source": "vision",
+                    "others_present": "yes",
+                },
+                "ts": make_ts(),
+            }
+        )
+
+
+# --- intrusion (non-Zeus animal at the door, Zeus not in frame) ---
+
+
+def test_accepts_intrusion_event():
+    event = validate_event(
+        {
+            "device_id": "tapo-cam-porch",
+            "type": "intrusion",
+            "payload": {
+                "zone": "porch",
+                "confidence": 0.88,
+                "source": "vision",
+                "animal_count": 1,
+            },
+            "ts": make_ts(),
+        }
+    )
+    assert event["type"] == "intrusion"
+
+
+def test_rejects_intrusion_without_animal_count():
+    with pytest.raises(ValidationError, match="animal_count"):
+        validate_event(
+            {
+                "device_id": "tapo-cam-porch",
+                "type": "intrusion",
+                "payload": {"zone": "porch", "confidence": 0.9, "source": "vision"},
+                "ts": make_ts(),
+            }
+        )

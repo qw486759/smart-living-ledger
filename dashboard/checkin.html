@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zeus — Manual Check-in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="checkin.css">
+  <script src="config.js"></script>
+  <script src="checkin.js" defer></script>
+</head>
+<body>
+  <main class="dashboard-shell">
+    <header class="dashboard-header">
+      <div>
+        <p class="eyebrow">Cat-Welfare Monitoring Platform</p>
+        <h1>Manual check-in</h1>
+      </div>
+      <a class="back-link" href="index.html">← Dashboard</a>
+    </header>
+
+    <section id="status-banner" class="error-banner" role="status" hidden></section>
+
+    <section class="panel-grid checkin-grid">
+      <article class="panel">
+        <p class="panel-kicker">I saw Zeus</p>
+        <h2>Log a sighting</h2>
+        <form id="sighting-form" class="checkin-form">
+          <label>Zone
+            <input name="zone" list="zones" value="porch" required>
+          </label>
+          <datalist id="zones">
+            <option value="porch"></option>
+            <option value="backyard"></option>
+            <option value="front-door"></option>
+            <option value="street"></option>
+          </datalist>
+          <button type="submit">Log sighting</button>
+        </form>
+      </article>
+
+      <article class="panel">
+        <p class="panel-kicker">Zeus ate</p>
+        <h2>Log a feeding</h2>
+        <form id="feeding-form" class="checkin-form">
+          <label>Grams
+            <input name="grams" type="number" min="0" max="2000" step="1" value="40" required>
+          </label>
+          <label>Duration (seconds, optional)
+            <input name="duration_s" type="number" min="0" step="1">
+          </label>
+          <button type="submit">Log feeding</button>
+        </form>
+      </article>
+    </section>
+
+    <footer class="dashboard-footer">
+      <span>Posts to the ingest API as <code>device_id: manual</code>. Set <code>window.EIP_INGEST_BASE</code> in config.js.</span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Event-Driven IoT Platform</title>
+  <title>Zeus — Cat-Welfare Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -16,8 +16,8 @@
   <main class="dashboard-shell">
     <header class="dashboard-header">
       <div>
-        <p class="eyebrow">AWS Serverless IoT Pipeline</p>
-        <h1>Event-Driven IoT Platform</h1>
+        <p class="eyebrow">Cat-Welfare Monitoring Platform</p>
+        <h1>Zeus</h1>
       </div>
       <div class="refresh-status" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
@@ -27,52 +27,91 @@
 
     <section id="error-banner" class="error-banner" role="alert" hidden></section>
 
-    <section class="panel-grid" aria-label="Device telemetry overview">
-      <article class="panel chart-panel">
-        <div class="panel-heading">
-          <div>
-            <p class="panel-kicker">Temperature</p>
-            <h2>Recent readings</h2>
-          </div>
-          <span id="temp-latest" class="metric-pill">-- °C</span>
+    <section class="visits" aria-label="Recent visits">
+      <div class="visits-heading">
+        <div>
+          <p class="panel-kicker">Recent visits</p>
+          <h2>When Zeus showed up</h2>
         </div>
-        <div class="chart-frame">
-          <canvas id="temperature-chart" aria-label="Temperature over time" role="img"></canvas>
+        <span id="visits-count" class="metric-pill">--</span>
+      </div>
+      <div class="gallery-scroller">
+        <button type="button" class="scroll-btn scroll-prev" data-target="visits-gallery" aria-label="Newer">‹</button>
+        <div id="visits-gallery" class="visits-gallery">
+          <p id="visits-empty" class="visits-empty">Waiting for the first sighting…</p>
         </div>
+        <button type="button" class="scroll-btn scroll-next" data-target="visits-gallery" aria-label="Older">›</button>
+      </div>
+    </section>
+
+    <section class="visits" aria-label="Recent intruders">
+      <div class="visits-heading">
+        <div>
+          <p class="panel-kicker">Intruders</p>
+          <h2>Other animals at the door</h2>
+        </div>
+        <span id="intruders-count" class="metric-pill">--</span>
+      </div>
+      <div class="gallery-scroller">
+        <button type="button" class="scroll-btn scroll-prev" data-target="intruders-gallery" aria-label="Newer">‹</button>
+        <div id="intruders-gallery" class="visits-gallery">
+          <p class="visits-empty">No intruders detected.</p>
+        </div>
+        <button type="button" class="scroll-btn scroll-next" data-target="intruders-gallery" aria-label="Older">›</button>
+      </div>
+    </section>
+
+    <section class="panel-grid" aria-label="Zeus welfare overview">
+      <article class="panel status-panel">
+        <p class="panel-kicker">Welfare</p>
+        <h2 id="welfare-state">Unknown</h2>
+        <p id="welfare-detail" class="panel-meta">Waiting for data</p>
+      </article>
+
+      <article class="panel status-panel">
+        <p class="panel-kicker">Last seen</p>
+        <h2 id="last-seen">--</h2>
+        <p id="last-seen-zone" class="panel-meta">--</p>
+        <p id="last-seen-meta" class="panel-timestamp">--</p>
       </article>
 
       <article class="panel chart-panel">
         <div class="panel-heading">
           <div>
-            <p class="panel-kicker">Smart Plug</p>
-            <h2>Average watts per hour</h2>
+            <p class="panel-kicker">Food intake</p>
+            <h2>Recent feedings</h2>
           </div>
-          <span id="plug-latest" class="metric-pill">-- W</span>
+          <span id="intake-latest" class="metric-pill">-- g</span>
         </div>
         <div class="chart-frame">
-          <canvas id="plug-chart" aria-label="Plug wattage per hour" role="img"></canvas>
+          <canvas id="intake-chart" aria-label="Food intake over time" role="img"></canvas>
         </div>
       </article>
 
-      <article class="panel status-panel motion-panel">
-        <p class="panel-kicker">Motion Sensor</p>
-        <h2 id="motion-state">No motion data</h2>
-        <p id="motion-device" class="panel-meta">Device unavailable</p>
-        <p id="motion-time" class="panel-timestamp">--</p>
-      </article>
-
-      <article class="panel status-panel voice-panel">
-        <p class="panel-kicker">Voice Command</p>
-        <h2 id="voice-command">No command data</h2>
-        <p id="voice-device" class="panel-meta">Device unavailable</p>
-        <p id="voice-time" class="panel-timestamp">--</p>
+      <article class="panel chart-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="panel-kicker">Sightings</p>
+            <h2>Per hour (last 24h)</h2>
+          </div>
+          <span id="sightings-total" class="metric-pill">-- / 24h</span>
+        </div>
+        <div class="chart-frame">
+          <canvas id="sightings-chart" aria-label="Sightings per hour" role="img"></canvas>
+        </div>
       </article>
     </section>
 
     <footer class="dashboard-footer">
       <button id="refresh-button" type="button">Refresh now</button>
-      <span>Auto-refreshes every 30 seconds</span>
+      <span>Auto-refreshes every 30 seconds · <a href="checkin.html">Manual check-in</a></span>
     </footer>
   </main>
+
+  <!-- Click-to-enlarge overlay for gallery photos. -->
+  <div id="lightbox" class="lightbox" hidden>
+    <img id="lightbox-img" class="lightbox-img" alt="Enlarged camera frame">
+    <p class="lightbox-caption" id="lightbox-caption"></p>
+  </div>
 </body>
 </html>

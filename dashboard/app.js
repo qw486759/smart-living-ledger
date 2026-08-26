@@ -1,24 +1,35 @@
 const API_BASE = (window.EIP_API_BASE || document.body.dataset.apiBase || '').replace(/\/$/, '');
 const REFRESH_INTERVAL_MS = 30_000;
-const TYPE_QUERY_LIMIT = 100;
+const EVENT_QUERY_LIMIT = 200;
+const ENTITY_ID = 'zeus';
+const NO_SIGHTING_ALERT_HOURS = 24;
 
-let temperatureChart;
-let plugChart;
+let intakeChart;
+let sightingsChart;
 let refreshTimer;
 
 const elements = {
   errorBanner: document.getElementById('error-banner'),
   lastRefresh: document.getElementById('last-refresh'),
   refreshButton: document.getElementById('refresh-button'),
-  tempLatest: document.getElementById('temp-latest'),
-  plugLatest: document.getElementById('plug-latest'),
-  motionState: document.getElementById('motion-state'),
-  motionDevice: document.getElementById('motion-device'),
-  motionTime: document.getElementById('motion-time'),
-  voiceCommand: document.getElementById('voice-command'),
-  voiceDevice: document.getElementById('voice-device'),
-  voiceTime: document.getElementById('voice-time'),
+  welfareState: document.getElementById('welfare-state'),
+  welfareDetail: document.getElementById('welfare-detail'),
+  lastSeen: document.getElementById('last-seen'),
+  lastSeenZone: document.getElementById('last-seen-zone'),
+  lastSeenMeta: document.getElementById('last-seen-meta'),
+  intakeLatest: document.getElementById('intake-latest'),
+  sightingsTotal: document.getElementById('sightings-total'),
+  visitsGallery: document.getElementById('visits-gallery'),
+  visitsCount: document.getElementById('visits-count'),
+  intrudersGallery: document.getElementById('intruders-gallery'),
+  intrudersCount: document.getElementById('intruders-count'),
+  lightbox: document.getElementById('lightbox'),
+  lightboxImg: document.getElementById('lightbox-img'),
+  lightboxCaption: document.getElementById('lightbox-caption'),
 };
+
+const GALLERY_LIMIT = 12;
+const SIGHTINGS_FETCH_LIMIT = 50;
 
 function buildChartOptions() {
   const styles = getComputedStyle(document.documentElement);
@@ -39,15 +50,8 @@ function buildChartOptions() {
       },
     },
     scales: {
-      x: {
-        ticks: { color: muted, maxRotation: 0, autoSkip: true },
-        grid: { color: border },
-      },
-      y: {
-        ticks: { color: muted },
-        grid: { color: border },
-        beginAtZero: false,
-      },
+      x: { ticks: { color: muted, maxRotation: 0, autoSkip: true }, grid: { color: border } },
+      y: { ticks: { color: muted }, grid: { color: border }, beginAtZero: true },
     },
   };
 }
@@ -58,165 +62,348 @@ function initializeCharts() {
   const orange = styles.getPropertyValue('--orange').trim();
   const sharedOptions = buildChartOptions();
 
-  temperatureChart = new Chart(document.getElementById('temperature-chart'), {
+  intakeChart = new Chart(document.getElementById('intake-chart'), {
     type: 'line',
     data: {
       labels: [],
-      datasets: [
-        {
-          data: [],
-          borderColor: blue,
-          backgroundColor: 'rgba(56, 189, 248, 0.14)',
-          borderWidth: 2,
-          fill: true,
-          pointRadius: 3,
-          tension: 0.35,
-        },
-      ],
+      datasets: [{
+        data: [],
+        borderColor: blue,
+        backgroundColor: 'rgba(56, 189, 248, 0.14)',
+        borderWidth: 2,
+        fill: true,
+        pointRadius: 3,
+        tension: 0.35,
+      }],
     },
     options: sharedOptions,
   });
 
-  plugChart = new Chart(document.getElementById('plug-chart'), {
+  sightingsChart = new Chart(document.getElementById('sightings-chart'), {
     type: 'bar',
     data: {
       labels: [],
-      datasets: [
-        {
-          data: [],
-          backgroundColor: 'rgba(251, 146, 60, 0.68)',
-          borderColor: orange,
-          borderWidth: 1,
-          borderRadius: 8,
-        },
-      ],
+      datasets: [{
+        data: [],
+        backgroundColor: 'rgba(251, 146, 60, 0.68)',
+        borderColor: orange,
+        borderWidth: 1,
+        borderRadius: 8,
+      }],
     },
-    options: {
-      ...sharedOptions,
-      scales: {
-        ...sharedOptions.scales,
-        y: { ...sharedOptions.scales.y, beginAtZero: true },
-      },
-    },
+    options: sharedOptions,
   });
 }
 
-async function fetchEvents(params = {}) {
+async function fetchJson(path, params = {}) {
   if (!API_BASE) {
-    throw new Error('Missing query API base URL. Set body[data-api-base] or window.EIP_API_BASE.');
+    throw new Error('Missing query API base URL. Set window.EIP_API_BASE in config.js.');
   }
-
-  const url = new URL(`${API_BASE}/events`);
+  const url = new URL(`${API_BASE}${path}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
 
   const response = await fetch(url);
   const body = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     const message = body.error || `Request failed with HTTP ${response.status}`;
     const code = body.code ? ` (${body.code})` : '';
     throw new Error(`${message}${code}`);
   }
+  return body;
+}
 
+async function fetchEntityState() {
+  const body = await fetchJson('/state', { entity: ENTITY_ID });
+  return body.state || null;
+}
+
+async function fetchEventsByType(type) {
+  const body = await fetchJson('/events', { type, limit: EVENT_QUERY_LIMIT });
   return Array.isArray(body.items) ? body.items : [];
 }
 
-function sortByTimestampAscending(items) {
-  return [...items].sort((left, right) => left.ts - right.ts);
+async function fetchRecentVisits() {
+  // Fetch more raw sightings than we show, since many collapse into a few visits.
+  const body = await fetchJson('/sightings', { limit: SIGHTINGS_FETCH_LIMIT });
+  return Array.isArray(body.items) ? body.items : [];
 }
 
-function sortByTimestampDescending(items) {
-  return [...items].sort((left, right) => right.ts - left.ts);
+async function fetchRecentIntrusions() {
+  const body = await fetchJson('/intrusions', { limit: GALLERY_LIMIT });
+  return Array.isArray(body.items) ? body.items : [];
 }
 
 function formatTime(ts) {
   if (!ts) return '--';
   return new Date(ts * 1000).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 }
 
-function formatHour(ts) {
-  return new Date(ts * 1000).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
+function formatHourLabel(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit' });
+}
+
+function hoursSince(ts) {
+  return (Date.now() / 1000 - ts) / 3600;
+}
+
+function renderWelfare(state) {
+  if (!state || !state.last_sighting_ts) {
+    elements.welfareState.textContent = 'Unknown';
+    elements.welfareDetail.textContent = 'No sightings yet';
+    return;
+  }
+  const gap = hoursSince(state.last_sighting_ts);
+  if (gap > NO_SIGHTING_ALERT_HOURS) {
+    elements.welfareState.textContent = 'Attention';
+    elements.welfareDetail.textContent = `Not seen for ${gap.toFixed(1)}h (> ${NO_SIGHTING_ALERT_HOURS}h)`;
+  } else {
+    elements.welfareState.textContent = 'OK';
+    elements.welfareDetail.textContent = `Seen ${gap.toFixed(1)}h ago`;
+  }
+}
+
+function renderLastSeen(state) {
+  if (!state || !state.last_sighting_ts) {
+    elements.lastSeen.textContent = '--';
+    elements.lastSeenZone.textContent = '--';
+    elements.lastSeenMeta.textContent = '--';
+    return;
+  }
+  elements.lastSeen.textContent = formatTime(state.last_sighting_ts);
+  elements.lastSeenZone.textContent = state.last_sighting_zone || '--';
+  const source = state.last_sighting_source || '--';
+  const conf = state.last_sighting_confidence;
+  const confText = conf != null ? ` · ${(Number(conf) * 100).toFixed(0)}% conf` : '';
+  elements.lastSeenMeta.textContent = `${source}${confText}`;
+}
+
+function renderIntake(feedings) {
+  const sorted = [...feedings].sort((left, right) => left.ts - right.ts).slice(-20);
+  intakeChart.data.labels = sorted.map((item) => formatTime(item.ts));
+  intakeChart.data.datasets[0].data = sorted.map((item) => Number(item.payload?.grams) || 0);
+  intakeChart.update();
+
+  const latest = [...feedings].sort((left, right) => right.ts - left.ts)[0];
+  elements.intakeLatest.textContent = latest ? `${(Number(latest.payload?.grams) || 0).toFixed(0)} g` : '-- g';
+}
+
+function renderSightings(sightings) {
+  const dayAgo = Date.now() / 1000 - 24 * 3600;
+  const recent = sightings.filter((item) => item.ts >= dayAgo);
+
+  const buckets = new Map();
+  recent.forEach((item) => {
+    const hourStart = Math.floor(item.ts / 3600) * 3600;
+    buckets.set(hourStart, (buckets.get(hourStart) || 0) + 1);
   });
+
+  const entries = [...buckets.entries()].sort(([left], [right]) => left - right);
+  sightingsChart.data.labels = entries.map(([hourStart]) => formatHourLabel(hourStart));
+  sightingsChart.data.datasets[0].data = entries.map(([, count]) => count);
+  sightingsChart.update();
+
+  elements.sightingsTotal.textContent = `${recent.length} / 24h`;
 }
 
-function updateTemperatureChart(items) {
-  const readings = sortByTimestampAscending(items)
-    .filter((item) => Number.isFinite(Number(item.payload?.celsius)))
-    .slice(-40);
-
-  temperatureChart.data.labels = readings.map((item) => formatHour(item.ts));
-  temperatureChart.data.datasets[0].data = readings.map((item) => Number(item.payload.celsius));
-  temperatureChart.update();
-
-  const latest = sortByTimestampDescending(readings)[0];
-  elements.tempLatest.textContent = latest ? `${Number(latest.payload.celsius).toFixed(1)} °C` : '-- °C';
+function makePhotoEl(imageUrl, missingClass, caption = '') {
+  const photo = document.createElement('div');
+  photo.className = 'visit-photo';
+  if (imageUrl) {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = 'Camera frame';
+    img.src = imageUrl;
+    // A vision frame can be gone (S3 lifecycle) → fall back to the missing tile.
+    img.addEventListener('error', () => { photo.classList.add(missingClass); img.remove(); });
+    img.addEventListener('click', () => openLightbox(imageUrl, caption));
+    photo.appendChild(img);
+  } else {
+    photo.classList.add(missingClass);
+  }
+  return photo;
 }
 
-function updatePlugChart(items) {
-  const hourlyBuckets = new Map();
+function openLightbox(src, caption = '') {
+  elements.lightboxImg.src = src;
+  elements.lightboxCaption.textContent = caption;
+  elements.lightbox.hidden = false;
+}
 
+function closeLightbox() {
+  elements.lightbox.hidden = true;
+  elements.lightboxImg.removeAttribute('src');
+}
+
+// Sightings closer together in time than this belong to the same visit — Zeus
+// sitting in one spot produces many near-identical frames, so we collapse a run
+// of them into one card showing the time span instead of N duplicate cards.
+const VISIT_GAP_MS = 15 * 60 * 1000;
+
+function clockOnly(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function groupIntoVisits(items) {
+  // `items` arrive newest-first; start a new visit whenever the gap to the
+  // previous (more recent) sighting exceeds VISIT_GAP_MS.
+  const groups = [];
+  let current = [];
   items.forEach((item) => {
-    const watts = Number(item.payload?.watt);
-    if (!Number.isFinite(watts) || !item.ts) return;
-
-    const bucketStartMs = Math.floor(item.ts / 3600) * 3600 * 1000;
-    const bucket = hourlyBuckets.get(bucketStartMs) || { total: 0, count: 0 };
-    bucket.total += watts;
-    bucket.count += 1;
-    hourlyBuckets.set(bucketStartMs, bucket);
+    const prev = current[current.length - 1];
+    if (prev && (prev.ts - item.ts) * 1000 > VISIT_GAP_MS) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(item);
   });
-
-  const buckets = [...hourlyBuckets.entries()]
-    .sort(([left], [right]) => left - right)
-    .slice(-12);
-
-  plugChart.data.labels = buckets.map(([bucketStartMs]) =>
-    new Date(bucketStartMs).toLocaleTimeString([], { hour: '2-digit' }),
-  );
-  plugChart.data.datasets[0].data = buckets.map(([, bucket]) =>
-    Math.round(bucket.total / bucket.count),
-  );
-  plugChart.update();
-
-  const latest = sortByTimestampDescending(items).find((item) => Number.isFinite(Number(item.payload?.watt)));
-  elements.plugLatest.textContent = latest ? `${Number(latest.payload.watt).toFixed(0)} W` : '-- W';
+  if (current.length) groups.push(current);
+  return groups;
 }
 
-function updateMotionStatus(items) {
-  const latest = sortByTimestampDescending(items)[0];
+function buildVisitCard(group) {
+  const rep = group[0];                          // newest sighting = representative photo
+  const payload = rep.payload || {};
+  const withOthers = group.some((g) => (g.payload || {}).others_present === true);
+  const isManual = group.every((g) => (g.payload || {}).source === 'manual');
+  const startTs = group[group.length - 1].ts;    // oldest in the visit
+  const endTs = group[0].ts;                      // newest in the visit
+  const count = group.length;
+  const timeText = count > 1 ? `${formatTime(startTs)} – ${clockOnly(endTs)}` : formatTime(endTs);
 
-  if (!latest) {
-    elements.motionState.textContent = 'No motion data';
-    elements.motionDevice.textContent = 'Device unavailable';
-    elements.motionTime.textContent = '--';
-    return;
+  const card = document.createElement('article');
+  card.className = 'visit-card';
+  if (withOthers) card.classList.add('visit-card--alert');
+  if (isManual) card.classList.add('visit-card--manual');
+
+  const caption = `${withOthers ? 'Zeus + another animal' : 'Zeus'} · ${timeText}${payload.zone ? ' · ' + payload.zone : ''}`;
+  const photo = makePhotoEl(rep.image_url, isManual ? 'visit-photo--manual' : 'visit-photo--missing', caption);
+  if (withOthers) {
+    const flag = document.createElement('span');
+    flag.className = 'visit-flag';
+    const n = Number(payload.animal_count) || 2;
+    flag.textContent = `Another animal · ${n} in frame`;
+    photo.appendChild(flag);
   }
+  card.appendChild(photo);
 
-  elements.motionState.textContent = latest.payload?.detected ? 'Detected' : 'Clear';
-  elements.motionDevice.textContent = latest.device_id || 'Unknown device';
-  elements.motionTime.textContent = formatTime(latest.ts);
+  const body = document.createElement('div');
+  body.className = 'visit-body';
+
+  const title = document.createElement('p');
+  title.className = 'visit-title';
+  title.textContent = withOthers ? 'Zeus + another animal' : isManual ? 'Manual check-in' : 'Zeus was here';
+  body.appendChild(title);
+
+  const time = document.createElement('p');
+  time.className = 'visit-time';
+  time.textContent = timeText;
+  body.appendChild(time);
+
+  const meta = document.createElement('p');
+  meta.className = 'visit-meta';
+  if (count > 1) {
+    meta.textContent = `${count} sightings · ${payload.zone || '--'}`;
+  } else {
+    const conf = payload.confidence;
+    const confText = conf != null ? `${Math.round(Number(conf) * 100)}% match · ` : '';
+    meta.textContent = `${confText}${payload.zone || '--'} · ${payload.source || '--'}`;
+  }
+  body.appendChild(meta);
+
+  card.appendChild(body);
+  return card;
 }
 
-function updateVoiceStatus(items) {
-  const latest = sortByTimestampDescending(items)[0];
+function renderVisits(sightings) {
+  const visits = groupIntoVisits(sightings);
+  elements.visitsCount.textContent = visits.length ? `${visits.length} visit${visits.length > 1 ? 's' : ''}` : '--';
+  elements.visitsGallery.replaceChildren();
 
-  if (!latest) {
-    elements.voiceCommand.textContent = 'No command data';
-    elements.voiceDevice.textContent = 'Device unavailable';
-    elements.voiceTime.textContent = '--';
+  if (!visits.length) {
+    const empty = document.createElement('p');
+    empty.className = 'visits-empty';
+    empty.textContent = 'No sightings yet — start the edge bridge when Zeus is around.';
+    elements.visitsGallery.appendChild(empty);
     return;
   }
+  visits.forEach((group) => elements.visitsGallery.appendChild(buildVisitCard(group)));
+}
 
-  elements.voiceCommand.textContent = latest.payload?.command || 'Unknown command';
-  elements.voiceDevice.textContent = latest.device_id || 'Unknown device';
-  elements.voiceTime.textContent = formatTime(latest.ts);
+function buildIntruderCard(item) {
+  const payload = item.payload || {};
+  const count = Number(payload.animal_count) || 1;
+
+  const card = document.createElement('article');
+  card.className = 'visit-card visit-card--alert';
+  card.appendChild(
+    makePhotoEl(item.image_url, 'visit-photo--missing', `Another animal · ${formatTime(item.ts)} · ${payload.zone || ''}`)
+  );
+
+  const body = document.createElement('div');
+  body.className = 'visit-body';
+
+  const title = document.createElement('p');
+  title.className = 'visit-title';
+  title.textContent = 'Another animal';
+  body.appendChild(title);
+
+  const time = document.createElement('p');
+  time.className = 'visit-time';
+  time.textContent = formatTime(item.ts);
+  body.appendChild(time);
+
+  const meta = document.createElement('p');
+  meta.className = 'visit-meta';
+  const conf = payload.confidence;
+  const confText = conf != null ? `${Math.round(Number(conf) * 100)}% conf · ` : '';
+  meta.textContent = `${count} in frame · ${confText}${payload.zone || '--'}`;
+  body.appendChild(meta);
+
+  card.appendChild(body);
+  return card;
+}
+
+function renderIntruders(intruders) {
+  elements.intrudersCount.textContent = intruders.length ? `${intruders.length} recent` : '--';
+  elements.intrudersGallery.replaceChildren();
+
+  if (!intruders.length) {
+    const empty = document.createElement('p');
+    empty.className = 'visits-empty';
+    empty.textContent = 'No intruders detected.';
+    elements.intrudersGallery.appendChild(empty);
+    return;
+  }
+  intruders.forEach((item) => elements.intrudersGallery.appendChild(buildIntruderCard(item)));
+}
+
+function updateScrollButtons(scroller) {
+  const gallery = scroller.querySelector('.visits-gallery');
+  const prev = scroller.querySelector('.scroll-prev');
+  const next = scroller.querySelector('.scroll-next');
+  const overflow = gallery.scrollWidth - gallery.clientWidth;
+  const scrollable = overflow > 2;
+  prev.hidden = !scrollable || gallery.scrollLeft <= 1;      // hide "newer" at the left edge
+  next.hidden = !scrollable || gallery.scrollLeft >= overflow - 1; // hide "older" at the right edge
+}
+
+function refreshScrollers() {
+  document.querySelectorAll('.gallery-scroller').forEach(updateScrollButtons);
+}
+
+function wireScrollers() {
+  document.querySelectorAll('.gallery-scroller').forEach((scroller) => {
+    const gallery = scroller.querySelector('.visits-gallery');
+    const amount = () => Math.max(gallery.clientWidth * 0.8, 240);
+    scroller.querySelector('.scroll-prev').addEventListener('click', () =>
+      gallery.scrollBy({ left: -amount(), behavior: 'smooth' }));
+    scroller.querySelector('.scroll-next').addEventListener('click', () =>
+      gallery.scrollBy({ left: amount(), behavior: 'smooth' }));
+    gallery.addEventListener('scroll', () => updateScrollButtons(scroller));
+  });
+  window.addEventListener('resize', refreshScrollers);
 }
 
 function showError(message) {
@@ -231,19 +418,21 @@ function clearError() {
 
 async function refreshDashboard() {
   elements.refreshButton.disabled = true;
-
   try {
-    const [temperatureEvents, plugEvents, motionEvents, voiceEvents] = await Promise.all([
-      fetchEvents({ type: 'temp', limit: TYPE_QUERY_LIMIT }),
-      fetchEvents({ type: 'plug', limit: TYPE_QUERY_LIMIT }),
-      fetchEvents({ type: 'motion', limit: TYPE_QUERY_LIMIT }),
-      fetchEvents({ type: 'voice', limit: TYPE_QUERY_LIMIT }),
+    const [state, feedings, sightings, visits, intruders] = await Promise.all([
+      fetchEntityState(),
+      fetchEventsByType('feeding'),
+      fetchEventsByType('sighting'),
+      fetchRecentVisits(),
+      fetchRecentIntrusions(),
     ]);
-
-    updateTemperatureChart(temperatureEvents);
-    updatePlugChart(plugEvents);
-    updateMotionStatus(motionEvents);
-    updateVoiceStatus(voiceEvents);
+    renderWelfare(state);
+    renderLastSeen(state);
+    renderIntake(feedings);
+    renderSightings(sightings);
+    renderVisits(visits);
+    renderIntruders(intruders);
+    refreshScrollers();
     elements.lastRefresh.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     clearError();
   } catch (error) {
@@ -260,7 +449,13 @@ function startAutoRefresh() {
 
 window.addEventListener('DOMContentLoaded', () => {
   initializeCharts();
+  wireScrollers();
   elements.refreshButton.addEventListener('click', refreshDashboard);
+  // Lightbox: click anywhere on the overlay to close, or press Escape.
+  elements.lightbox.addEventListener('click', closeLightbox);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !elements.lightbox.hidden) closeLightbox();
+  });
   refreshDashboard();
   startAutoRefresh();
 });
